@@ -1,4 +1,4 @@
-.PHONY: setup test lint check acquire acquire-execute
+.PHONY: setup test lint check acquire acquire-execute classify
 
 setup:
 	uv sync --project pipeline
@@ -18,3 +18,7 @@ acquire:
 acquire-execute:
 	@test -n "$(REQUEST)" || (echo "REQUEST is required" >&2; exit 2)
 	uv run --project pipeline openacts acquire "$(REQUEST)" --execute
+
+classify:
+	@test -n "$(RECEIPT)" || (echo "RECEIPT is required" >&2; exit 2)
+	uv run --project pipeline openacts classify "$(RECEIPT)"

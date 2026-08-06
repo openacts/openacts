@@ -24,6 +24,14 @@ from jsonschema import Draft202012Validator, FormatChecker
 from pypdf import PdfReader
 from referencing import Registry, Resource
 
+from openacts_pipeline.classify import classify
+from openacts_pipeline.common import (
+    PipelineError,
+    iso_timestamp,
+    utc_now,
+    write_json_result,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_DIR = REPO_ROOT / "schemas"
 DEFAULT_CACHE_ROOT = REPO_ROOT / "source-cache"
@@ -55,21 +63,7 @@ REQUIRED_REQUEST_FIELDS = {
 }
 TRANSIENT_HTTP_STATUSES = {408, 429, 500, 502, 503, 504}
 
-
-class AcquisitionError(Exception):
-    """A classified acquisition failure."""
-
-    def __init__(self, code: str, message: str, *, retryable: bool = False) -> None:
-        super().__init__(message)
-        self.code = code
-        self.retryable = retryable
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "code": self.code,
-            "message": str(self),
-            "retryable": self.retryable,
-        }
+AcquisitionError = PipelineError
 
 
 @dataclass(frozen=True)
@@ -107,14 +101,6 @@ class _RedirectRecorder(HTTPRedirectHandler):
         _validate_url(newurl)
         self.history.append({"status": code, "from": req.full_url, "to": newurl})
         return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
-
-
-def _iso_timestamp(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _validate_url(url: str) -> None:
@@ -260,7 +246,7 @@ def _http_date(value: str | None) -> str | None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return _iso_timestamp(parsed)
+    return iso_timestamp(parsed)
 
 
 def _download_once(url: str, cache_root: Path) -> Download:
@@ -427,22 +413,7 @@ def _write_result(
     started_at: datetime,
 ) -> Path:
     run_id = f"{started_at:%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
-    relative_path = Path("runs") / f"{run_id}.json"
-    result["result_path"] = relative_path.as_posix()
-    destination = cache_root / relative_path
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{run_id}-", suffix=".tmp", dir=destination.parent
-    )
-    temporary_path = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(result, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-        os.replace(temporary_path, destination)
-    finally:
-        temporary_path.unlink(missing_ok=True)
-    return destination
+    return write_json_result(cache_root, result, Path("runs") / f"{run_id}.json")
 
 
 def acquire(
@@ -468,8 +439,8 @@ def acquire(
             },
         }
 
-    started_at = _utc_now()
-    retrieved_at = _iso_timestamp(started_at)
+    started_at = utc_now()
+    retrieved_at = iso_timestamp(started_at)
     download: Download | None = None
     try:
         download = _download(request["url"], cache_root, sleep=sleep)
@@ -487,7 +458,7 @@ def acquire(
         result = {
             "status": "success",
             "started_at": retrieved_at,
-            "finished_at": _iso_timestamp(_utc_now()),
+            "finished_at": iso_timestamp(utc_now()),
             "cache_path": cache_path.relative_to(cache_root).as_posix(),
             "cache_created": cache_created,
             "http": {
@@ -512,7 +483,7 @@ def acquire(
         result = {
             "status": "failure",
             "started_at": retrieved_at,
-            "finished_at": _iso_timestamp(_utc_now()),
+            "finished_at": iso_timestamp(utc_now()),
             "url": request["url"],
             "error": exc.as_dict(),
         }
@@ -532,11 +503,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="perform network access and write the local cache",
     )
+    classify_parser = subparsers.add_parser(
+        "classify", help="measure cached PDF text coverage"
+    )
+    classify_parser.add_argument("receipt", type=Path)
     args = parser.parse_args(argv)
 
     try:
-        result = acquire(args.request, execute=args.execute)
-    except AcquisitionError as exc:
+        if args.command == "acquire":
+            result = acquire(args.request, execute=args.execute)
+        else:
+            result = classify(args.receipt, cache_root=DEFAULT_CACHE_ROOT)
+    except PipelineError as exc:
         print(
             json.dumps({"status": "failure", "error": exc.as_dict()}), file=sys.stderr
         )
