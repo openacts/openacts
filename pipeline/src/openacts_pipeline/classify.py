@@ -1,6 +1,5 @@
 """Measure PDF text coverage before choosing an extraction route."""
 
-import hashlib
 import json
 import unicodedata
 import uuid
@@ -14,6 +13,7 @@ from openacts_pipeline.common import (
     PipelineError,
     iso_timestamp,
     utc_now,
+    verify_cached_pdf,
     write_json_result,
 )
 
@@ -104,32 +104,6 @@ def _load_source(receipt_path: Path, cache_root: Path) -> SourceInput:
         receipt_path=relative_receipt.as_posix(),
         cache_path=cache_path,
     )
-
-
-def _verify_cache(source: SourceInput, cache_root: Path) -> Path:
-    cached_pdf = cache_root / source.cache_path
-    try:
-        byte_length = cached_pdf.stat().st_size
-    except OSError as exc:
-        raise ClassificationError(
-            "cache_missing", f"cannot read cached PDF: {exc}"
-        ) from exc
-    if byte_length != source.byte_length:
-        raise ClassificationError(
-            "cache_size_mismatch", "cached PDF byte length changed after acquisition"
-        )
-    try:
-        with cached_pdf.open("rb") as handle:
-            digest = hashlib.file_digest(handle, "sha256").hexdigest()
-    except OSError as exc:
-        raise ClassificationError(
-            "cache_unreadable", f"cannot hash cached PDF: {exc}"
-        ) from exc
-    if digest != source.digest:
-        raise ClassificationError(
-            "cache_digest_mismatch", "cached PDF digest changed after acquisition"
-        )
-    return cached_pdf
 
 
 def _failed_page(
@@ -394,7 +368,12 @@ def _summarize(pages: list[dict[str, Any]]) -> dict[str, Any]:
 def classify(receipt_path: Path, *, cache_root: Path) -> dict[str, Any]:
     started_at = utc_now()
     source = _load_source(receipt_path, cache_root)
-    cached_pdf = _verify_cache(source, cache_root)
+    cached_pdf = verify_cached_pdf(
+        cache_root,
+        source.cache_path,
+        expected_byte_length=source.byte_length,
+        expected_digest=source.digest,
+    )
     try:
         reader = PdfReader(cached_pdf, strict=False)
         if reader.is_encrypted:

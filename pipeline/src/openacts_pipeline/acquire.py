@@ -31,6 +31,7 @@ from openacts_pipeline.common import (
     utc_now,
     write_json_result,
 )
+from openacts_pipeline.extract import extract
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_DIR = REPO_ROOT / "schemas"
@@ -507,13 +508,19 @@ def main(argv: list[str] | None = None) -> int:
         "classify", help="measure cached PDF text coverage"
     )
     classify_parser.add_argument("receipt", type=Path)
+    extract_parser = subparsers.add_parser(
+        "extract", help="extract native text from a classified PDF"
+    )
+    extract_parser.add_argument("classification", type=Path)
     args = parser.parse_args(argv)
 
     try:
         if args.command == "acquire":
             result = acquire(args.request, execute=args.execute)
-        else:
+        elif args.command == "classify":
             result = classify(args.receipt, cache_root=DEFAULT_CACHE_ROOT)
+        else:
+            result = extract(args.classification, cache_root=DEFAULT_CACHE_ROOT)
     except PipelineError as exc:
         print(
             json.dumps({"status": "failure", "error": exc.as_dict()}), file=sys.stderr

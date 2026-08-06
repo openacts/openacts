@@ -65,3 +65,21 @@ Classification does not use the network, save extracted text, or edit the
 corpus. It is deliberately conservative: the PDF format cannot prove whether
 all extractable text was authored digitally or added by OCR, so the report also
 selects pages for human review.
+
+## Extract native text
+
+Pass a successful classification report whose document route is `extract`:
+
+```sh
+make extract CLASSIFICATION=source-cache/classifications/<run>.json
+```
+
+The extractor rechecks the cached PDF's digest, size, and page count, then uses
+`pypdf` to preserve one raw text record for every PDF page. The complete,
+versioned artifact is written atomically under `source-cache/extractions/`; the
+command prints only its path and summary rather than the extracted document.
+
+Extraction does not remove headers, normalize text, infer legal structure, run
+OCR, or edit the corpus. A non-native classification route fails explicitly.
+The following structuring stage turns this working text into reviewed Act and
+Provision records with Source page spans.

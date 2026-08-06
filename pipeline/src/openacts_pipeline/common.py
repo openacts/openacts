@@ -1,5 +1,6 @@
 """Shared primitives for local pipeline stages."""
 
+import hashlib
 import json
 import os
 import tempfile
@@ -30,6 +31,36 @@ def utc_now() -> datetime:
 
 def iso_timestamp(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def verify_cached_pdf(
+    cache_root: Path,
+    relative_path: Path,
+    *,
+    expected_byte_length: int,
+    expected_digest: str,
+) -> Path:
+    cached_pdf = cache_root / relative_path
+    try:
+        byte_length = cached_pdf.stat().st_size
+    except OSError as exc:
+        raise PipelineError("cache_missing", f"cannot read cached PDF: {exc}") from exc
+    if byte_length != expected_byte_length:
+        raise PipelineError(
+            "cache_size_mismatch", "cached PDF byte length changed after acquisition"
+        )
+    try:
+        with cached_pdf.open("rb") as handle:
+            digest = hashlib.file_digest(handle, "sha256").hexdigest()
+    except OSError as exc:
+        raise PipelineError(
+            "cache_unreadable", f"cannot hash cached PDF: {exc}"
+        ) from exc
+    if digest != expected_digest:
+        raise PipelineError(
+            "cache_digest_mismatch", "cached PDF digest changed after acquisition"
+        )
+    return cached_pdf
 
 
 def write_json_result(
