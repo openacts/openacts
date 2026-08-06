@@ -1,2 +1,4 @@
 docs/core/
 /source-cache/
+__pycache__/
+*.py[cod]

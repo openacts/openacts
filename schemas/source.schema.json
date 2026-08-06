@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenActs Source record",
+  "$ref": "#/$defs/source",
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "record_type",
+        "source_id",
+        "document_title",
+        "document_publisher",
+        "language",
+        "source_class",
+        "publication",
+        "media_type",
+        "byte_length",
+        "page_count",
+        "text_layer",
+        "locations",
+        "redistribution",
+        "document_notes"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "record_type": {
+          "const": "source"
+        },
+        "source_id": {
+          "$ref": "common.schema.json#/$defs/source_id"
+        },
+        "document_title": {
+          "$ref": "common.schema.json#/$defs/non_empty_string"
+        },
+        "document_publisher": {
+          "$ref": "common.schema.json#/$defs/non_empty_string"
+        },
+        "language": {
+          "$ref": "common.schema.json#/$defs/language_code"
+        },
+        "source_class": {
+          "enum": [
+            "official_gazette",
+            "certified_legislative_copy",
+            "official_agency_copy",
+            "official_translation",
+            "institutional_copy",
+            "secondary_copy"
+          ]
+        },
+        "publication": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/publication"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "media_type": {
+          "const": "application/pdf"
+        },
+        "byte_length": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "page_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "text_layer": {
+          "enum": [
+            "born_digital",
+            "ocr",
+            "scan_only",
+            "mixed",
+            "unknown"
+          ]
+        },
+        "locations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/location"
+          }
+        },
+        "redistribution": {
+          "$ref": "#/$defs/redistribution"
+        },
+        "document_notes": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/non_empty_string"
+          }
+        }
+      }
+    },
+    "publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "date",
+        "number",
+        "volume",
+        "notice_number",
+        "page_range"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "common.schema.json#/$defs/non_empty_string"
+        },
+        "date": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/iso_date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "number": {
+          "$ref": "common.schema.json#/$defs/nullable_string"
+        },
+        "volume": {
+          "$ref": "common.schema.json#/$defs/nullable_string"
+        },
+        "notice_number": {
+          "$ref": "common.schema.json#/$defs/nullable_string"
+        },
+        "page_range": {
+          "$ref": "common.schema.json#/$defs/nullable_string"
+        }
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "provider_name",
+        "retrieved_at",
+        "http_last_modified",
+        "notes"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://"
+        },
+        "provider_name": {
+          "$ref": "common.schema.json#/$defs/non_empty_string"
+        },
+        "retrieved_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "http_last_modified": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "$ref": "common.schema.json#/$defs/nullable_string"
+        }
+      }
+    },
+    "redistribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "license",
+        "notes"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "allowed",
+            "not_allowed",
+            "not_researched"
+          ]
+        },
+        "license": {
+          "$ref": "common.schema.json#/$defs/nullable_string"
+        },
+        "notes": {
+          "$ref": "common.schema.json#/$defs/nullable_string"
+        }
+      }
+    }
+  }
+}

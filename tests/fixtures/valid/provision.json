@@ -1,0 +1,31 @@
+{
+  "schema_version": "0.1.0",
+  "record_type": "provision",
+  "provision_id": "ng-federal-act-2023-37:section-1",
+  "node_type": "section",
+  "display_label": "1.",
+  "heading": "Example provision",
+  "parent_provision_id": null,
+  "order": 1,
+  "source_spans": [
+    {
+      "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "pdf_page": 1
+    }
+  ],
+  "content_blocks": [
+    {
+      "block_id": "section-1-text",
+      "kind": "text",
+      "text": "See section 1.",
+      "source_spans": [
+        {
+          "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "pdf_page": 1,
+          "printed_page": "1"
+        }
+      ]
+    }
+  ],
+  "text_fidelity": "machine_extracted"
+}

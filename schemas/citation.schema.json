@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenActs Citation record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_type",
+    "citation_id",
+    "source_provision_id",
+    "source_block_id",
+    "text_range",
+    "target"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schema_version"
+    },
+    "record_type": {
+      "const": "citation"
+    },
+    "citation_id": {
+      "$ref": "common.schema.json#/$defs/citation_id"
+    },
+    "source_provision_id": {
+      "$ref": "common.schema.json#/$defs/provision_id"
+    },
+    "source_block_id": {
+      "$ref": "common.schema.json#/$defs/block_id"
+    },
+    "text_range": {
+      "$ref": "common.schema.json#/$defs/text_range"
+    },
+    "target": {
+      "$ref": "#/$defs/target"
+    }
+  },
+  "$defs": {
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "act_id",
+        "provision_id"
+      ],
+      "properties": {
+        "act_id": {
+          "$ref": "common.schema.json#/$defs/act_id"
+        },
+        "provision_id": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/provision_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

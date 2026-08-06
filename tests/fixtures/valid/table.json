@@ -1,0 +1,195 @@
+{
+  "block_id": "fees-table",
+  "kind": "table",
+  "caption": {
+    "text": "Example fees",
+    "source_spans": [
+      {
+        "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "pdf_page": 2,
+        "printed_page": "2"
+      }
+    ]
+  },
+  "column_count": 2,
+  "row_groups": [
+    {
+      "group_id": "fees-header-group",
+      "role": "header",
+      "rows": [
+        {
+          "row_id": "fees-header-row",
+          "cells": [
+            {
+              "cell_id": "fees-item-header",
+              "column_start": 1,
+              "role": "header",
+              "scope": "column",
+              "row_span": 1,
+              "column_span": 1,
+              "header_cell_ids": [],
+              "blank": false,
+              "content_blocks": [
+                {
+                  "block_id": "fees-item-header-text",
+                  "kind": "text",
+                  "text": "Item",
+                  "source_spans": [
+                    {
+                      "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "pdf_page": 2,
+                      "printed_page": "2"
+                    }
+                  ]
+                }
+              ],
+              "source_spans": [
+                {
+                  "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "pdf_page": 2,
+                  "printed_page": "2"
+                }
+              ]
+            },
+            {
+              "cell_id": "fees-amount-header",
+              "column_start": 2,
+              "role": "header",
+              "scope": "column",
+              "row_span": 1,
+              "column_span": 1,
+              "header_cell_ids": [],
+              "blank": false,
+              "content_blocks": [
+                {
+                  "block_id": "fees-amount-header-text",
+                  "kind": "text",
+                  "text": "Amount",
+                  "source_spans": [
+                    {
+                      "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "pdf_page": 2,
+                      "printed_page": "2"
+                    }
+                  ]
+                }
+              ],
+              "source_spans": [
+                {
+                  "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "pdf_page": 2,
+                  "printed_page": "2"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "group_id": "fees-body-group",
+      "role": "body",
+      "rows": [
+        {
+          "row_id": "fees-body-row-1",
+          "cells": [
+            {
+              "cell_id": "fees-item-1",
+              "column_start": 1,
+              "role": "data",
+              "scope": null,
+              "row_span": 1,
+              "column_span": 1,
+              "header_cell_ids": [
+                "fees-item-header"
+              ],
+              "blank": false,
+              "content_blocks": [
+                {
+                  "block_id": "fees-item-1-text",
+                  "kind": "text",
+                  "text": "Application",
+                  "source_spans": [
+                    {
+                      "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "pdf_page": 2,
+                      "printed_page": "2"
+                    }
+                  ]
+                }
+              ],
+              "source_spans": [
+                {
+                  "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "pdf_page": 2,
+                  "printed_page": "2"
+                }
+              ]
+            },
+            {
+              "cell_id": "fees-amount-1",
+              "column_start": 2,
+              "role": "data",
+              "scope": null,
+              "row_span": 1,
+              "column_span": 1,
+              "header_cell_ids": [
+                "fees-amount-header"
+              ],
+              "blank": false,
+              "content_blocks": [
+                {
+                  "block_id": "fees-amount-1-text",
+                  "kind": "text",
+                  "text": "100",
+                  "source_spans": [
+                    {
+                      "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "pdf_page": 2,
+                      "printed_page": "2"
+                    }
+                  ]
+                }
+              ],
+              "source_spans": [
+                {
+                  "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "pdf_page": 2,
+                  "printed_page": "2"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "notes": [],
+  "source_segments": [
+    {
+      "segment_id": "fees-page-2",
+      "row_ids": [
+        "fees-header-row",
+        "fees-body-row-1"
+      ],
+      "repeated_header_row_ids": [
+        "fees-header-row"
+      ],
+      "source_spans": [
+        {
+          "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "pdf_page": 2,
+          "printed_page": "2"
+        }
+      ]
+    }
+  ],
+  "layout_status": "faithfully_reconstructed",
+  "source_spans": [
+    {
+      "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "pdf_page": 2,
+      "printed_page": "2"
+    }
+  ]
+}

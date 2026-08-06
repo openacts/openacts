@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenActs Act record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_type",
+    "act_id",
+    "jurisdiction",
+    "country_code",
+    "titles",
+    "year",
+    "number",
+    "citation",
+    "dates",
+    "aliases",
+    "status",
+    "checked_through_date",
+    "status_source_ids",
+    "source_refs",
+    "editorial_notes"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schema_version"
+    },
+    "record_type": {
+      "const": "act"
+    },
+    "act_id": {
+      "$ref": "common.schema.json#/$defs/act_id"
+    },
+    "jurisdiction": {
+      "type": "string",
+      "pattern": "^[a-z]{2}(?:-[a-z0-9]+)+$"
+    },
+    "country_code": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}$"
+    },
+    "titles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "official",
+        "short",
+        "long"
+      ],
+      "properties": {
+        "official": {
+          "$ref": "common.schema.json#/$defs/non_empty_string"
+        },
+        "short": {
+          "$ref": "common.schema.json#/$defs/nullable_string"
+        },
+        "long": {
+          "$ref": "common.schema.json#/$defs/nullable_string"
+        }
+      }
+    },
+    "year": {
+      "type": "integer",
+      "minimum": 1800,
+      "maximum": 9999
+    },
+    "number": {
+      "$ref": "common.schema.json#/$defs/nullable_string"
+    },
+    "citation": {
+      "$ref": "common.schema.json#/$defs/nullable_string"
+    },
+    "dates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assent",
+        "publication",
+        "commencement",
+        "repeal"
+      ],
+      "properties": {
+        "assent": {
+          "$ref": "common.schema.json#/$defs/date_claim"
+        },
+        "publication": {
+          "$ref": "common.schema.json#/$defs/date_claim"
+        },
+        "commencement": {
+          "$ref": "common.schema.json#/$defs/date_claim"
+        },
+        "repeal": {
+          "$ref": "common.schema.json#/$defs/date_claim"
+        }
+      }
+    },
+    "aliases": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/non_empty_string"
+      },
+      "uniqueItems": true
+    },
+    "status": {
+      "enum": [
+        "in_force",
+        "repealed",
+        "spent",
+        "not_yet_commenced",
+        "mixed",
+        "unknown"
+      ]
+    },
+    "checked_through_date": {
+      "oneOf": [
+        {
+          "$ref": "common.schema.json#/$defs/iso_date"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status_source_ids": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/source_id"
+      },
+      "uniqueItems": true
+    },
+    "source_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "common.schema.json#/$defs/source_relation"
+      },
+      "uniqueItems": true,
+      "contains": {
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "const": "authoritative_text"
+          }
+        }
+      },
+      "minContains": 1,
+      "maxContains": 1
+    },
+    "editorial_notes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/editorial_note"
+      }
+    }
+  },
+  "$defs": {
+    "editorial_note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "note",
+        "source_ids",
+        "decision_refs"
+      ],
+      "properties": {
+        "note": {
+          "$ref": "common.schema.json#/$defs/non_empty_string"
+        },
+        "source_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/source_id"
+          },
+          "uniqueItems": true
+        },
+        "decision_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/non_empty_string"
+          },
+          "uniqueItems": true
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "not": {
+              "const": "unknown"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "checked_through_date": {
+            "$ref": "common.schema.json#/$defs/iso_date"
+          },
+          "status_source_ids": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ]
+}

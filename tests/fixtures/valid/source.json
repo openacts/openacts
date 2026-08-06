@@ -1,0 +1,38 @@
+{
+  "schema_version": "0.1.0",
+  "record_type": "source",
+  "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "document_title": "Example Act 2023",
+  "document_publisher": "Example Official Gazette",
+  "language": "eng",
+  "source_class": "official_gazette",
+  "publication": {
+    "name": "Example Official Gazette",
+    "date": "2023-06-12",
+    "number": "37",
+    "volume": null,
+    "notice_number": null,
+    "page_range": "1-2"
+  },
+  "media_type": "application/pdf",
+  "byte_length": 1024,
+  "page_count": 2,
+  "text_layer": "born_digital",
+  "locations": [
+    {
+      "url": "https://example.gov.test/example-act-2023.pdf",
+      "provider_name": "Example Official Gazette",
+      "retrieved_at": "2026-08-06T12:00:00Z",
+      "http_last_modified": null,
+      "notes": "Synthetic validation fixture; no file was downloaded."
+    }
+  ],
+  "redistribution": {
+    "status": "not_researched",
+    "license": null,
+    "notes": "Synthetic validation fixture."
+  },
+  "document_notes": [
+    "This is not a real legal source."
+  ]
+}

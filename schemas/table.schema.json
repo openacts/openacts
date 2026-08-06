@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenActs table content block",
+  "$ref": "#/$defs/table_block",
+  "$defs": {
+    "table_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "block_id",
+        "kind",
+        "caption",
+        "column_count",
+        "row_groups",
+        "notes",
+        "source_segments",
+        "layout_status",
+        "source_spans"
+      ],
+      "properties": {
+        "block_id": {
+          "$ref": "common.schema.json#/$defs/block_id"
+        },
+        "kind": {
+          "const": "table"
+        },
+        "caption": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/table_caption"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "column_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "row_groups": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/table_row_group"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/content_block"
+          }
+        },
+        "source_segments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/table_source_segment"
+          }
+        },
+        "layout_status": {
+          "enum": [
+            "faithfully_reconstructed",
+            "reconstruction_uncertain",
+            "source_conflict"
+          ]
+        },
+        "source_spans": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "common.schema.json#/$defs/source_span"
+          }
+        }
+      }
+    },
+    "table_caption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "source_spans"
+      ],
+      "properties": {
+        "text": {
+          "$ref": "common.schema.json#/$defs/non_empty_string"
+        },
+        "source_spans": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "common.schema.json#/$defs/source_span"
+          }
+        }
+      }
+    },
+    "table_row_group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "group_id",
+        "role",
+        "rows"
+      ],
+      "properties": {
+        "group_id": {
+          "$ref": "common.schema.json#/$defs/block_id"
+        },
+        "role": {
+          "enum": [
+            "header",
+            "body",
+            "footer"
+          ]
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/table_row"
+          }
+        }
+      }
+    },
+    "table_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "row_id",
+        "cells"
+      ],
+      "properties": {
+        "row_id": {
+          "$ref": "common.schema.json#/$defs/block_id"
+        },
+        "cells": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/table_cell"
+          }
+        }
+      }
+    },
+    "table_cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cell_id",
+        "column_start",
+        "role",
+        "scope",
+        "row_span",
+        "column_span",
+        "header_cell_ids",
+        "blank",
+        "content_blocks",
+        "source_spans"
+      ],
+      "properties": {
+        "cell_id": {
+          "$ref": "common.schema.json#/$defs/block_id"
+        },
+        "column_start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "role": {
+          "enum": [
+            "header",
+            "data"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "row",
+            "column",
+            "row_group",
+            "column_group",
+            null
+          ]
+        },
+        "row_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "header_cell_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/block_id"
+          },
+          "uniqueItems": true
+        },
+        "blank": {
+          "type": "boolean"
+        },
+        "content_blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/content_block"
+          }
+        },
+        "source_spans": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "common.schema.json#/$defs/source_span"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "blank": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content_blocks": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "content_blocks": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "header"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "scope": {
+                "enum": [
+                  "row",
+                  "column",
+                  "row_group",
+                  "column_group"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "scope": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "table_source_segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "segment_id",
+        "row_ids",
+        "repeated_header_row_ids",
+        "source_spans"
+      ],
+      "properties": {
+        "segment_id": {
+          "$ref": "common.schema.json#/$defs/block_id"
+        },
+        "row_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "common.schema.json#/$defs/block_id"
+          },
+          "uniqueItems": true
+        },
+        "repeated_header_row_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/block_id"
+          },
+          "uniqueItems": true
+        },
+        "source_spans": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "common.schema.json#/$defs/source_span"
+          }
+        }
+      }
+    }
+  }
+}

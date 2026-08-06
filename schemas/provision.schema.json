@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenActs Provision record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_type",
+    "provision_id",
+    "node_type",
+    "display_label",
+    "heading",
+    "parent_provision_id",
+    "order",
+    "source_spans",
+    "content_blocks",
+    "text_fidelity"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schema_version"
+    },
+    "record_type": {
+      "const": "provision"
+    },
+    "provision_id": {
+      "$ref": "common.schema.json#/$defs/provision_id"
+    },
+    "node_type": {
+      "enum": [
+        "document_title",
+        "long_title",
+        "arrangement",
+        "preamble",
+        "enacting_formula",
+        "part",
+        "chapter",
+        "division",
+        "cross_heading",
+        "section",
+        "subsection",
+        "paragraph",
+        "subparagraph",
+        "definition",
+        "schedule",
+        "schedule_part",
+        "schedule_paragraph",
+        "schedule_subparagraph",
+        "table",
+        "form",
+        "authentication",
+        "explanatory_note"
+      ]
+    },
+    "display_label": {
+      "$ref": "common.schema.json#/$defs/nullable_string"
+    },
+    "heading": {
+      "$ref": "common.schema.json#/$defs/nullable_string"
+    },
+    "parent_provision_id": {
+      "oneOf": [
+        {
+          "$ref": "common.schema.json#/$defs/provision_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "order": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "source_spans": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "common.schema.json#/$defs/source_span"
+      }
+    },
+    "content_blocks": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/content_block"
+      }
+    },
+    "text_fidelity": {
+      "$ref": "common.schema.json#/$defs/text_fidelity"
+    }
+  }
+}

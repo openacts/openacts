@@ -1,0 +1,49 @@
+{
+  "schema_version": "0.1.0",
+  "record_type": "act",
+  "act_id": "ng-federal-act-1999-constitution",
+  "jurisdiction": "ng-federal",
+  "country_code": "NG",
+  "titles": {
+    "official": "Constitution of the Federal Republic of Nigeria 1999",
+    "short": "1999 Constitution",
+    "long": null
+  },
+  "year": 1999,
+  "number": null,
+  "citation": "Constitution of the Federal Republic of Nigeria 1999",
+  "dates": {
+    "assent": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    },
+    "publication": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    },
+    "commencement": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    },
+    "repeal": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    }
+  },
+  "aliases": [],
+  "status": "unknown",
+  "checked_through_date": null,
+  "status_source_ids": [],
+  "source_refs": [
+    {
+      "source_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "role": "authoritative_text",
+      "scope_note": "Synthetic contract fixture; no source has been acquired."
+    }
+  ],
+  "editorial_notes": []
+}

@@ -1,0 +1,57 @@
+{
+  "schema_version": "0.1.0",
+  "record_type": "act",
+  "act_id": "ng-federal-act-2023-37",
+  "jurisdiction": "ng-federal",
+  "country_code": "NG",
+  "titles": {
+    "official": "Example Act 2023",
+    "short": "Example Act",
+    "long": "An Act used only to validate the OpenActs corpus contract."
+  },
+  "year": 2023,
+  "number": "37",
+  "citation": "Act No. 37 of 2023",
+  "dates": {
+    "assent": {
+      "date": "2023-06-12",
+      "null_reason": null,
+      "source_ids": [
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    },
+    "publication": {
+      "date": "2023-06-12",
+      "null_reason": null,
+      "source_ids": [
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    },
+    "commencement": {
+      "date": "2023-06-12",
+      "null_reason": null,
+      "source_ids": [
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    },
+    "repeal": {
+      "date": null,
+      "null_reason": "not_applicable",
+      "source_ids": []
+    }
+  },
+  "aliases": [],
+  "status": "in_force",
+  "checked_through_date": "2026-08-06",
+  "status_source_ids": [
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "source_refs": [
+    {
+      "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "role": "authoritative_text",
+      "scope_note": "Complete as-enacted text."
+    }
+  ],
+  "editorial_notes": []
+}

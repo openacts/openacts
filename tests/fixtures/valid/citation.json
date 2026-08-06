@@ -1,0 +1,15 @@
+{
+  "schema_version": "0.1.0",
+  "record_type": "citation",
+  "citation_id": "citation:ng-federal-act-2023-37:000001",
+  "source_provision_id": "ng-federal-act-2023-37:section-1",
+  "source_block_id": "section-1-text",
+  "text_range": {
+    "start": 4,
+    "end": 13
+  },
+  "target": {
+    "act_id": "ng-federal-act-2023-37",
+    "provision_id": "ng-federal-act-2023-37:section-1"
+  }
+}
