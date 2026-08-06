@@ -1,4 +1,7 @@
 docs/core/
-/source-cache/
+source-cache/
+.venv/
+.pytest_cache/
+.ruff_cache/
 __pycache__/
 *.py[cod]
