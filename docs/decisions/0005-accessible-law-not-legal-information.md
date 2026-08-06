@@ -9,11 +9,10 @@ Comparable providers often describe themselves as legal-information services and
 
 ## Decision
 
-OpenActs makes Nigerian law itself accessible. It reproduces the exact published legal wording, normalizes presentation without rewriting the content, and makes the resulting law readable, searchable, linkable, traversable, versioned, and reusable.
+OpenActs makes Nigerian law itself accessible. It reproduces the exact published legal wording, normalizes presentation without rewriting the content, and makes the resulting law readable, searchable, linkable, traversable, release-identifiable, and reusable.
 
-Every published Provision links to its Source and identifies the Version being shown. OpenActs does not need summaries, interpretations, generated explanations, or an advisory layer to deliver its core value. Any general liability language belongs in unobtrusive site terms; it does not define the product or lead the reading experience.
+Every published Provision links to its Source, and every page identifies the corpus release being shown. OpenActs does not need summaries, interpretations, generated explanations, or an advisory layer to deliver its core value. Any general liability language belongs in unobtrusive site terms; it does not define the product or lead the reading experience.
 
 ## Why
 
 The differentiator is not more information about Nigerian law. It is transforming inaccessible published documents into open, structured law that people and machines can directly use while preserving the original wording and Source trail.
-

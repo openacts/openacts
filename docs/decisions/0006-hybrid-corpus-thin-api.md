@@ -1,6 +1,6 @@
 # 0006 — Hybrid canonical corpus behind a thin read-only API
 
-**Status:** Accepted
+**Status:** Accepted; Source placement superseded by [0016 — Global content-addressed Source manifest](0016-global-content-addressed-sources.md), and canonical record layout superseded by [0018 — Direct Act and Provision corpus](0018-direct-act-provision-corpus.md)
 **Date:** 5 August 2026
 
 ## Context
@@ -9,7 +9,7 @@ The corpus must remain directly readable and reviewable in Git, while its larges
 
 ## Decision
 
-The six-record OpenActs model remains canonical. Small metadata documents use indented JSON: `act.json`, `sources.json`, and each `version.json`. Growing record collections use canonical JSON Lines: `provisions.jsonl`, `citations.jsonl`, and `changes.jsonl`. Every JSONL line is one complete schema-validated record; file ordering and serialization are deterministic. Parquet and other consumer formats are generated projections, never independently edited sources of truth.
+The five-record OpenActs model remains canonical: Act, Version, Provision, Source, and Citation. Small metadata documents use indented JSON: each `act.json` and `version.json`. Growing record collections use canonical JSON Lines: the corpus-global `sources.jsonl`, and each Act's `provisions.jsonl` and `citations.jsonl`. Every JSONL line is one complete schema-validated record; file ordering and serialization are deterministic. Parquet and other consumer formats are generated projections, never independently edited sources of truth.
 
 A thin, read-only FastAPI service is the frontend's corpus boundary. It validates and loads a tagged corpus release at startup, builds disposable in-memory traversal and lexical-search indexes, and exposes a versioned REST API with corpus-version metadata and cache validators. It does not edit the corpus, run a CMS, own a background queue, or require a persistent database.
 
