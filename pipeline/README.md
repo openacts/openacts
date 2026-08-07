@@ -66,21 +66,32 @@ corpus. It is deliberately conservative: the PDF format cannot prove whether
 all extractable text was authored digitally or added by OCR, so the report also
 selects pages for human review.
 
-## Extract native text
+## Extract classified pages
 
-Pass a successful classification report whose document route is `extract`:
+Install the pinned PaddleOCR dependencies and models once. The preview is
+offline; execution downloads only missing models into the ignored local cache:
+
+```sh
+make ocr-setup
+make ocr-setup-execute
+```
+
+Then pass any successful `extract`, `ocr`, or `hybrid` classification report:
 
 ```sh
 make extract CLASSIFICATION=source-cache/classifications/<run>.json
 ```
 
-The extractor rechecks the cached PDF's digest, size, and page count, then uses
-`pypdf` to preserve one raw text record for every PDF page. The complete,
-versioned artifact is written atomically under `source-cache/extractions/`; the
-command prints only its path and summary rather than the extracted document.
+The extractor rechecks the cached PDF's digest, size, and page count. It uses
+`pypdf` for `extract` pages, PaddleOCR for `ocr` pages in bounded batches, and
+does no work for `skip` pages. Every PDF page still has one ordered output
+record; skipped pages carry empty text. OCR page details are checkpointed under
+`source-cache/extraction-work/`, and the complete merged artifact is written
+atomically under `source-cache/extractions/`.
 
-Extraction does not remove headers, normalize text, infer legal structure, run
-OCR, or edit the corpus. A non-native classification route fails explicitly.
+Extraction is offline and never downloads models, removes headers, normalizes
+text, infers legal structure, or edits the corpus. A `manual_review` document
+route still stops explicitly; review is not silently replaced with OCR.
 
 ## Structure extracted text
 

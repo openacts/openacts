@@ -1,7 +1,8 @@
-"""Extract native PDF text into a page-preserving processing artifact."""
+"""Extract classified PDF pages into one ordered processing artifact."""
 
 import json
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -18,8 +19,12 @@ from openacts_pipeline.common import (
 
 ExtractionError = PipelineError
 
-EXTRACTION_VERSION = 1
+EXTRACTION_VERSION = 2
 SUPPORTED_CLASSIFIER_VERSION = 1
+SUPPORTED_DOCUMENT_ROUTES = {"extract", "ocr", "hybrid"}
+SUPPORTED_PAGE_ROUTES = {"extract", "ocr", "skip", "review"}
+
+OcrExtractor = Callable[[Path, list[int], Path, str], dict[str, Any]]
 
 
 def _positive_integer(value: Any, field: str) -> int:
@@ -87,10 +92,10 @@ def _load_classification(
     if not isinstance(summary, dict):
         raise ExtractionError("invalid_classification", "classification has no summary")
     route = summary.get("proposed_route")
-    if route != "extract":
+    if route not in SUPPORTED_DOCUMENT_ROUTES:
         raise ExtractionError(
             "unsupported_classification_route",
-            f"native extraction does not support route: {route}",
+            f"extraction does not support route: {route}",
         )
 
     pages = report.get("pages")
@@ -107,13 +112,40 @@ def _load_classification(
             raise ExtractionError(
                 "invalid_classification", "classification page evidence is inconsistent"
             )
+        page_route = page.get("proposed_route")
+        if page_route not in SUPPORTED_PAGE_ROUTES:
+            raise ExtractionError(
+                "invalid_classification", f"page {pdf_page} has an unknown route"
+            )
+        if page_route == "review" and page.get("reason_codes") != ["sparse_text"]:
+            raise ExtractionError(
+                "manual_review_required",
+                f"page {pdf_page} requires review before extraction",
+            )
 
     report["byte_length"] = byte_length
     report["page_count"] = page_count
     return report, digest, cache_path, relative_path
 
 
-def extract(classification_path: Path, *, cache_root: Path) -> dict[str, Any]:
+def _default_ocr_extractor(
+    pdf_path: Path,
+    page_numbers: list[int],
+    cache_root: Path,
+    source_id: str,
+) -> dict[str, Any]:
+    # Keep heavyweight OCR imports out of native-only extraction runs.
+    from openacts_pipeline.ocr import extract_ocr_pages
+
+    return extract_ocr_pages(pdf_path, page_numbers, cache_root, source_id)
+
+
+def extract(
+    classification_path: Path,
+    *,
+    cache_root: Path,
+    ocr_extractor: OcrExtractor | None = None,
+) -> dict[str, Any]:
     started_at = utc_now()
     classification, digest, cache_path, relative_input = _load_classification(
         classification_path, cache_root
@@ -140,26 +172,87 @@ def extract(classification_path: Path, *, cache_root: Path) -> dict[str, Any]:
             "pdf_unreadable", f"cannot inspect cached PDF: {exc}"
         ) from exc
 
-    pages: list[dict[str, Any]] = []
+    classified_pages = classification["pages"]
+    native_text: dict[int, str] = {}
     for pdf_page, page in enumerate(reader.pages, start=1):
+        route = classified_pages[pdf_page - 1]["proposed_route"]
+        if route not in {"extract", "review"}:
+            continue
         try:
             text = page.extract_text() or ""
         except Exception as exc:
             raise ExtractionError(
                 "page_extraction_failed", f"page {pdf_page}: {exc}"
             ) from exc
-        pages.append(
-            {
-                "pdf_page": pdf_page,
-                "text": text,
-                "text_characters": len(text),
-            }
-        )
+        native_text[pdf_page] = text
 
+    ocr_page_numbers = [
+        page["pdf_page"] for page in classified_pages if page["proposed_route"] == "ocr"
+    ]
+    ocr_run: dict[str, Any] = {
+        "pages": {},
+        "metadata": None,
+        "checkpoints_reused": 0,
+    }
+    if ocr_page_numbers:
+        runner = ocr_extractor or _default_ocr_extractor
+        ocr_run = runner(
+            cached_pdf,
+            ocr_page_numbers,
+            cache_root,
+            classification["source_id"],
+        )
+        ocr_pages = ocr_run.get("pages")
+        if not isinstance(ocr_pages, dict) or set(ocr_pages) != set(ocr_page_numbers):
+            raise ExtractionError(
+                "ocr_invalid_output", "OCR output does not match classified pages"
+            )
+
+    pages: list[dict[str, Any]] = []
+    for classified_page in classified_pages:
+        pdf_page = classified_page["pdf_page"]
+        route = classified_page["proposed_route"]
+        if route == "ocr":
+            checkpoint = ocr_run["pages"][pdf_page]
+            text = checkpoint.get("text")
+            detail_path = checkpoint.get("result_path")
+            if not isinstance(text, str) or not isinstance(detail_path, str):
+                raise ExtractionError(
+                    "ocr_invalid_output", f"page {pdf_page}: OCR output is incomplete"
+                )
+            method = "ocr"
+        elif route == "skip":
+            text = ""
+            detail_path = None
+            method = "skip"
+        else:
+            text = native_text[pdf_page]
+            detail_path = None
+            method = "native"
+        page_result = {
+            "pdf_page": pdf_page,
+            "classification_route": route,
+            "method": method,
+            "text": text,
+            "text_characters": len(text),
+        }
+        if detail_path is not None:
+            page_result["ocr_detail_path"] = detail_path
+        pages.append(page_result)
+
+    method_counts = {
+        method: sum(page["method"] == method for page in pages)
+        for method in ("native", "ocr", "skip")
+    }
     summary = {
-        "pages_extracted": len(pages),
+        "pages_extracted": method_counts["native"] + method_counts["ocr"],
+        "pages_output": len(pages),
+        "native_pages": method_counts["native"],
+        "ocr_pages": method_counts["ocr"],
+        "skipped_pages": method_counts["skip"],
         "empty_pages": sum(not page["text"].strip() for page in pages),
         "text_characters": sum(page["text_characters"] for page in pages),
+        "ocr_checkpoints_reused": ocr_run["checkpoints_reused"],
     }
     artifact = {
         "stage": "extract",
@@ -174,6 +267,7 @@ def extract(classification_path: Path, *, cache_root: Path) -> dict[str, Any]:
         "byte_length": classification["byte_length"],
         "page_count": classification["page_count"],
         "extractor": {"name": "pypdf", "version": pypdf_version},
+        "ocr_extractor": ocr_run["metadata"],
         "pages": pages,
         "summary": summary,
     }

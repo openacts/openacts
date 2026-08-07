@@ -30,7 +30,10 @@ def _node(
     }
 
 
-def test_structure_dry_run_does_not_call_the_model_or_write(tmp_path: Path) -> None:
+@pytest.mark.parametrize("extraction_version", [1, 2])
+def test_structure_dry_run_does_not_call_the_model_or_write(
+    tmp_path: Path, extraction_version: int
+) -> None:
     cache_root = tmp_path / "source-cache"
     extraction = cache_root / "extractions/extract.json"
     extraction.parent.mkdir(parents=True)
@@ -39,7 +42,7 @@ def test_structure_dry_run_does_not_call_the_model_or_write(tmp_path: Path) -> N
             {
                 "stage": "extract",
                 "status": "success",
-                "extraction_version": 1,
+                "extraction_version": extraction_version,
                 "source_id": SOURCE_ID,
                 "page_count": 1,
                 "pages": [

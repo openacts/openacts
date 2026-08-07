@@ -33,6 +33,7 @@ from openacts_pipeline.common import (
 )
 from openacts_pipeline.corpus import candidate, promote
 from openacts_pipeline.extract import extract
+from openacts_pipeline.ocr import setup_ocr_models
 from openacts_pipeline.structure import structure
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -511,9 +512,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     classify_parser.add_argument("receipt", type=Path)
     extract_parser = subparsers.add_parser(
-        "extract", help="extract native text from a classified PDF"
+        "extract", help="extract classified pages with native text and OCR"
     )
     extract_parser.add_argument("classification", type=Path)
+    ocr_setup_parser = subparsers.add_parser(
+        "ocr-setup", help="inspect or download the pinned PaddleOCR models"
+    )
+    ocr_setup_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="download missing models into the local cache",
+    )
     structure_parser = subparsers.add_parser(
         "structure", help="infer a reviewable hierarchy from extracted text"
     )
@@ -546,6 +555,10 @@ def main(argv: list[str] | None = None) -> int:
             result = classify(args.receipt, cache_root=DEFAULT_CACHE_ROOT)
         elif args.command == "extract":
             result = extract(args.classification, cache_root=DEFAULT_CACHE_ROOT)
+        elif args.command == "ocr-setup":
+            result = setup_ocr_models(
+                cache_root=DEFAULT_CACHE_ROOT, execute=args.execute
+            )
         elif args.command == "structure":
             result = structure(
                 args.extraction,

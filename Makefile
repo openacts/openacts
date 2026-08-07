@@ -1,7 +1,13 @@
-.PHONY: setup test lint check acquire acquire-execute classify extract structure structure-execute candidate promote promote-execute
+.PHONY: setup ocr-setup ocr-setup-execute test lint check acquire acquire-execute classify extract structure structure-execute candidate promote promote-execute
 
 setup:
 	uv sync --project pipeline
+
+ocr-setup:
+	uv run --project pipeline openacts ocr-setup
+
+ocr-setup-execute:
+	uv run --project pipeline --group ocr openacts ocr-setup --execute
 
 test:
 	uv run --project pipeline pytest tests/test_contract.py pipeline/tests

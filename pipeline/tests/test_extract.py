@@ -92,7 +92,11 @@ def test_extract_preserves_every_page_without_touching_corpus(
 
     assert result["status"] == "success"
     assert "pages" not in result
-    assert result["summary"]["pages_extracted"] == 4
+    assert result["summary"]["pages_extracted"] == 3
+    assert result["summary"]["pages_output"] == 4
+    assert result["summary"]["native_pages"] == 3
+    assert result["summary"]["ocr_pages"] == 0
+    assert result["summary"]["skipped_pages"] == 1
     assert result["summary"]["empty_pages"] == 1
     assert result["summary"]["text_characters"] > 0
     assert corpus_path.read_text(encoding="utf-8") == "unchanged\n"
@@ -105,8 +109,20 @@ def test_extract_preserves_every_page_without_touching_corpus(
     assert artifact["input_classification"] == classification["result_path"]
     assert artifact["extractor"]["name"] == "pypdf"
     assert artifact["extractor"]["version"]
+    assert artifact["ocr_extractor"] is None
     assert [page["pdf_page"] for page in artifact["pages"]] == [1, 2, 3, 4]
-    assert [page["text"] for page in artifact["pages"]] == expected_texts
+    assert [page["text"] for page in artifact["pages"]] == [
+        expected_texts[0],
+        expected_texts[1],
+        "",
+        expected_texts[3],
+    ]
+    assert [page["method"] for page in artifact["pages"]] == [
+        "native",
+        "native",
+        "skip",
+        "native",
+    ]
     assert artifact["pages"][2]["text"] == ""
     assert all(
         page["text_characters"] == len(page["text"]) for page in artifact["pages"]
@@ -114,10 +130,9 @@ def test_extract_preserves_every_page_without_touching_corpus(
     assert artifact["summary"] == result["summary"]
 
 
-@pytest.mark.parametrize("route", ["ocr", "hybrid", "manual_review"])
-def test_extract_rejects_non_native_routes(tmp_path: Path, route: str) -> None:
+def test_extract_rejects_manual_review_route(tmp_path: Path) -> None:
     classification_path, cache_root, _, _, classification = _classification(tmp_path)
-    classification["summary"]["proposed_route"] = route
+    classification["summary"]["proposed_route"] = "manual_review"
     classification_path.write_text(json.dumps(classification), encoding="utf-8")
 
     with pytest.raises(ExtractionError) as caught:
@@ -125,6 +140,57 @@ def test_extract_rejects_non_native_routes(tmp_path: Path, route: str) -> None:
 
     assert caught.value.code == "unsupported_classification_route"
     assert not (cache_root / "extractions").exists()
+
+
+def test_extract_merges_native_ocr_and_skipped_pages(tmp_path: Path) -> None:
+    classification_path, cache_root, cached_pdf, _, classification = _classification(
+        tmp_path
+    )
+    classification["summary"]["proposed_route"] = "hybrid"
+    classification["pages"][1]["proposed_route"] = "ocr"
+    classification["pages"][1]["reason_codes"] = [
+        "dominant_raster",
+        "no_extractable_text",
+    ]
+    classification_path.write_text(json.dumps(classification), encoding="utf-8")
+
+    def fake_ocr(
+        pdf_path: Path,
+        page_numbers: list[int],
+        actual_cache_root: Path,
+        source_id: str,
+    ) -> dict[str, object]:
+        assert pdf_path == cached_pdf
+        assert page_numbers == [2]
+        assert actual_cache_root == cache_root
+        assert source_id == classification["source_id"]
+        return {
+            "pages": {
+                2: {
+                    "text": "OCR cover text",
+                    "result_path": "extraction-work/work/page-0002.json",
+                }
+            },
+            "metadata": {"engine": "paddleocr", "engine_version": "3.7.0"},
+            "checkpoints_reused": 0,
+        }
+
+    result = extract(classification_path, cache_root=cache_root, ocr_extractor=fake_ocr)
+
+    artifact = json.loads(
+        (cache_root / result["result_path"]).read_text(encoding="utf-8")
+    )
+    assert [page["method"] for page in artifact["pages"]] == [
+        "native",
+        "ocr",
+        "skip",
+        "native",
+    ]
+    assert artifact["pages"][1]["text"] == "OCR cover text"
+    assert artifact["pages"][1]["ocr_detail_path"].endswith("page-0002.json")
+    assert result["summary"]["native_pages"] == 2
+    assert result["summary"]["ocr_pages"] == 1
+    assert result["summary"]["skipped_pages"] == 1
 
 
 def test_extract_rejects_changed_cached_bytes(tmp_path: Path) -> None:

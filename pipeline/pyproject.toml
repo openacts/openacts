@@ -23,6 +23,11 @@ dev = [
   "pytest>=8.3",
   "ruff>=0.12",
 ]
+ocr = [
+  "paddleocr==3.7.0",
+  "paddlepaddle==3.2.0",
+  "pypdfium2==5.12.1",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/openacts_pipeline"]

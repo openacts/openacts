@@ -46,7 +46,7 @@ from openacts_pipeline.structure_schema import (
 )
 
 STRUCTURE_VERSION = 3
-SUPPORTED_EXTRACTION_VERSION = 1
+SUPPORTED_EXTRACTION_VERSIONS = {1, 2}
 PROMPT_VERSION = 15
 MAX_OUTPUT_TOKENS = 384_000
 TRANSIENT_MODEL_STATUSES = {408, 429, 500, 502, 503, 504}
@@ -287,7 +287,7 @@ def _load_extraction(
         raise PipelineError(
             "invalid_extraction", "extraction result_path does not match input"
         )
-    if artifact.get("extraction_version") != SUPPORTED_EXTRACTION_VERSION:
+    if artifact.get("extraction_version") not in SUPPORTED_EXTRACTION_VERSIONS:
         raise PipelineError(
             "unsupported_extraction_version", "extraction version is unsupported"
         )
