@@ -13,6 +13,15 @@ from openacts_pipeline.structure_schema import FocusPlan, StructureDraft
 SOURCE_ID = "sha256:" + "a" * 64
 
 
+def test_deepseek_profile_uses_provider_max_tokens_field() -> None:
+    assert (
+        structure_module.DEEPSEEK_PROFILE[
+            "openai_chat_supports_max_completion_tokens"
+        ]
+        is False
+    )
+
+
 def _node(
     node_type: str,
     label: str | None = None,

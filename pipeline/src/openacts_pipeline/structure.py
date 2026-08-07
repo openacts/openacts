@@ -250,6 +250,7 @@ DEEPSEEK_PROFILE = cast(
         "supports_tools": True,
         "supports_thinking": True,
         "openai_chat_thinking_field": "reasoning_content",
+        "openai_chat_supports_max_completion_tokens": False,
         "openai_supports_strict_tool_definition": False,
     },
 )
