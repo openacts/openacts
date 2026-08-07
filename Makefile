@@ -1,4 +1,4 @@
-.PHONY: setup test lint check acquire acquire-execute classify extract structure structure-execute
+.PHONY: setup test lint check acquire acquire-execute classify extract structure structure-execute candidate promote promote-execute
 
 setup:
 	uv sync --project pipeline
@@ -34,3 +34,16 @@ structure:
 structure-execute:
 	@test -n "$(EXTRACTION)" || (echo "EXTRACTION is required" >&2; exit 2)
 	uv run --env-file pipeline/.env --project pipeline openacts structure "$(EXTRACTION)" --execute
+
+candidate:
+	@test -n "$(STRUCTURE)" || (echo "STRUCTURE is required" >&2; exit 2)
+	@test -n "$(ACT)" || (echo "ACT is required" >&2; exit 2)
+	uv run --project pipeline openacts candidate "$(STRUCTURE)" "$(ACT)"
+
+promote:
+	@test -n "$(CANDIDATE)" || (echo "CANDIDATE is required" >&2; exit 2)
+	uv run --project pipeline openacts promote "$(CANDIDATE)"
+
+promote-execute:
+	@test -n "$(CANDIDATE)" || (echo "CANDIDATE is required" >&2; exit 2)
+	uv run --project pipeline openacts promote "$(CANDIDATE)" --execute

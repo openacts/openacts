@@ -31,6 +31,7 @@ from openacts_pipeline.common import (
     utc_now,
     write_json_result,
 )
+from openacts_pipeline.corpus import candidate, promote
 from openacts_pipeline.extract import extract
 from openacts_pipeline.structure import structure
 
@@ -522,6 +523,20 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="perform model API requests and write the local draft",
     )
+    candidate_parser = subparsers.add_parser(
+        "candidate", help="materialize a corpus-shaped review candidate"
+    )
+    candidate_parser.add_argument("structure", type=Path)
+    candidate_parser.add_argument("act", type=Path)
+    promote_parser = subparsers.add_parser(
+        "promote", help="validate or promote a reviewed corpus candidate"
+    )
+    promote_parser.add_argument("candidate", type=Path)
+    promote_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="write the reviewed candidate to the authored corpus",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -531,9 +546,21 @@ def main(argv: list[str] | None = None) -> int:
             result = classify(args.receipt, cache_root=DEFAULT_CACHE_ROOT)
         elif args.command == "extract":
             result = extract(args.classification, cache_root=DEFAULT_CACHE_ROOT)
-        else:
+        elif args.command == "structure":
             result = structure(
                 args.extraction,
+                execute=args.execute,
+                cache_root=DEFAULT_CACHE_ROOT,
+            )
+        elif args.command == "candidate":
+            result = candidate(
+                args.structure,
+                args.act,
+                cache_root=DEFAULT_CACHE_ROOT,
+            )
+        else:
+            result = promote(
+                args.candidate,
                 execute=args.execute,
                 cache_root=DEFAULT_CACHE_ROOT,
             )

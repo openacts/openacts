@@ -97,6 +97,10 @@ numbers; it does not receive the extraction JSON or local cache metadata. Draft
 Provisions use the canonical `node_type` vocabulary and canonical text, list,
 and table content-block shapes from `schemas/`.
 
+Schedule passes preserve printed labels and support the full legal nesting
+`schedule_paragraph` -> `schedule_subparagraph` -> `paragraph` ->
+`subparagraph`, with an optional `schedule_part` above the paragraph.
+
 Add `DEEPSEEK_API_KEY` to the gitignored `pipeline/.env`, then explicitly run:
 
 ```sh
@@ -128,3 +132,45 @@ The completed draft is written atomically under `source-cache/structures/` and
 records each pass, target, checkpoint status, model, usage, and latency. Its
 `provisions` contain the complete hierarchy and content blocks. Permanent
 corpus IDs are deliberately assigned later; this stage never edits `corpus/`.
+
+## Build and review a corpus candidate
+
+Create one schema-valid Act record containing the human-authored metadata and
+the authoritative `source_id`, then materialize the structured draft:
+
+```sh
+make candidate \
+  STRUCTURE=source-cache/structures/<run>.json \
+  ACT=source-cache/requests/<act>.json
+```
+
+This local, deterministic step traces the recorded pipeline inputs back to the
+acquisition receipt, verifies the cached PDF, assigns proposed permanent
+Provision IDs, and writes the exact corpus layout under
+`source-cache/corpus-candidates/`. It preserves the structured wording and
+starts every Provision at `machine_extracted`; `citations.jsonl` starts empty.
+It never edits `corpus/`.
+
+Schedules receive order-based permanent IDs (`schedule-1`, `schedule-2`, ...)
+regardless of whether the printed label says `SCHEDULE`, `FIRST SCHEDULE`, or an
+equivalent ordinal. The exact printed label remains in `display_label`.
+
+Review and correct those candidate files against the PDF. Change each checked
+Provision's `text_fidelity` to `single_reviewed`, `double_reviewed`, or
+`source_conflict`. Then validate the candidate without writing:
+
+```sh
+make promote CANDIDATE=source-cache/corpus-candidates/<candidate>
+```
+
+Promotion is blocked while any Provision remains `machine_extracted`. Once the
+candidate is reviewed and the dry run reports `ready`, explicitly write it:
+
+```sh
+make promote-execute CANDIDATE=source-cache/corpus-candidates/<candidate>
+```
+
+The promotion revalidates every schema and cross-record relationship, rechecks
+the cached PDF, merges the immutable Source by ID, and creates a previously
+absent Act directory. Updating an existing authored Act remains a separate
+reviewed change rather than an overwrite operation.

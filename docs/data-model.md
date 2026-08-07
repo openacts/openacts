@@ -163,6 +163,15 @@ or `SCHEDULE`. It is not normalized search data. `heading` preserves heading
 wording. Containers may have no content blocks, but every Provision has at least
 one Source span.
 
+Schedule identity follows legal reading order independently of the printed
+wording: the first Schedule is `schedule-1`, whether its visible label is
+`SCHEDULE` or `FIRST SCHEDULE`; the second is `schedule-2`, and so on. Their
+descendants extend that parent identity, for example
+`schedule-2.part-1.paragraph-1.subparagraph-1.paragraph-a.subparagraph-i`.
+Printed ordinal wording remains unchanged in `display_label`. A `~2` suffix is
+reserved for a genuine duplicate proposed identity, not an ordinary second
+Schedule.
+
 #### Content blocks
 
 Provision content is an ordered recursive structure:
@@ -323,10 +332,11 @@ A corpus validator must additionally enforce facts involving multiple records:
    Source evidence and a non-null `checked_through_date`.
 8. Authored serialization follows the deterministic rules in section 7.
 
-[`tests/test_contract.py`](../tests/test_contract.py) implements the
-cross-record checks that can be exercised without source binaries. Source
-acquisition separately verifies that cached bytes match `source_id`,
-`byte_length`, and measured PDF properties before a Source record is accepted.
+The pipeline's corpus materializer implements these cross-record checks, and
+[`tests/test_contract.py`](../tests/test_contract.py) exercises them without
+source binaries. Source acquisition separately verifies that cached bytes match
+`source_id`, `byte_length`, and measured PDF properties before a Source record
+is accepted.
 
 Schema-valid means structurally admissible, not a guarantee that transcription
 or metadata is correct. Corpus publication still requires provenance and human

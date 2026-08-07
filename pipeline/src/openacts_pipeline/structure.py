@@ -47,7 +47,7 @@ from openacts_pipeline.structure_schema import (
 
 STRUCTURE_VERSION = 3
 SUPPORTED_EXTRACTION_VERSION = 1
-PROMPT_VERSION = 13
+PROMPT_VERSION = 15
 MAX_OUTPUT_TOKENS = 384_000
 TRANSIENT_MODEL_STATUSES = {408, 429, 500, 502, 503, 504}
 
@@ -122,6 +122,19 @@ the subsection owns `Intro —`; the paragraph owns `First`:
 When a section has subsection children, its paragraphs must be children of the
 applicable subsection, never siblings of it.
 
+Definitions may also own marked paragraphs. Given `"competent authority"
+includes — (a) First; or (b) Second;`, return one definition whose own text is
+only `"competent authority" includes —` and whose children are Paragraph (a)
+and Paragraph (b), each owning its complete wording. Never flatten those
+markers and their wording into the definition's text block.
+
+Within each Schedule, use this hierarchy when the printed levels exist:
+schedule -> optional schedule_part -> schedule_paragraph ->
+schedule_subparagraph -> paragraph -> subparagraph. The first parenthesised
+subdivision beneath a numbered schedule paragraph is a schedule_subparagraph
+whether its marker is `(1)` or `(a)`. Preserve the printed Schedule label, such
+as `SCHEDULE`, `FIRST SCHEDULE`, or `SECOND SCHEDULE`, exactly in display_label.
+
 Do not copy a child's introductory wording into its parent. Keep an unnumbered
 proviso beginning `Provided that` inside the existing containing node's
 content_blocks array, for example
@@ -193,6 +206,8 @@ SCHEDULE_NODE_TYPES = {
     "schedule_part",
     "schedule_paragraph",
     "schedule_subparagraph",
+    "paragraph",
+    "subparagraph",
     "cross_heading",
     "table",
     "form",
@@ -207,7 +222,7 @@ CONTENT_OPTIONAL_LEAVES = {
     "schedule_part",
 }
 ADDRESSABLE_MARKER = re.compile(
-    r"(?:^|\n)\s*(?:[—–-]\s*)?"
+    r"(?:^|\n|[—–:]|-\s+)\s*"
     r"(?:\(\d+[a-z]?\)|\([a-z]\)|\([ivxlcdm]+\)|\d+[a-z]?\.)\s+",
     re.IGNORECASE,
 )
@@ -221,7 +236,7 @@ STRUCTURAL_LIST_STYLES = {
 PARENT_NODE_TYPES = {
     "section": {"part", "chapter", "division"},
     "subsection": {"section"},
-    "paragraph": {"section", "subsection"},
+    "paragraph": {"section", "subsection", "definition", "schedule_subparagraph"},
     "subparagraph": {"paragraph"},
     "schedule_part": {"schedule"},
     "schedule_paragraph": {"schedule", "schedule_part"},
