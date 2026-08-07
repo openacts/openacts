@@ -32,6 +32,7 @@ from openacts_pipeline.common import (
     write_json_result,
 )
 from openacts_pipeline.extract import extract
+from openacts_pipeline.structure import structure
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_DIR = REPO_ROOT / "schemas"
@@ -512,6 +513,15 @@ def main(argv: list[str] | None = None) -> int:
         "extract", help="extract native text from a classified PDF"
     )
     extract_parser.add_argument("classification", type=Path)
+    structure_parser = subparsers.add_parser(
+        "structure", help="infer a reviewable hierarchy from extracted text"
+    )
+    structure_parser.add_argument("extraction", type=Path)
+    structure_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="perform model API requests and write the local draft",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -519,8 +529,14 @@ def main(argv: list[str] | None = None) -> int:
             result = acquire(args.request, execute=args.execute)
         elif args.command == "classify":
             result = classify(args.receipt, cache_root=DEFAULT_CACHE_ROOT)
-        else:
+        elif args.command == "extract":
             result = extract(args.classification, cache_root=DEFAULT_CACHE_ROOT)
+        else:
+            result = structure(
+                args.extraction,
+                execute=args.execute,
+                cache_root=DEFAULT_CACHE_ROOT,
+            )
     except PipelineError as exc:
         print(
             json.dumps({"status": "failure", "error": exc.as_dict()}), file=sys.stderr
