@@ -204,25 +204,64 @@ class StructureDraft(BaseModel):
 DraftNode.model_rebuild()
 
 
-class FocusUnit(BaseModel):
+class StructureUnit(BaseModel):
+    """One bounded, independently replaceable model task."""
+
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["part", "schedule"]
+    unit_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    kind: Literal["front_matter", "body", "chapter", "part", "schedule"]
     display_label: str | None = None
     heading: str | None = None
-    pdf_page: int = Field(ge=1)
+    start_pdf_page: int = Field(ge=1)
+    end_pdf_page: int = Field(ge=1)
 
     @model_validator(mode="after")
-    def identify_unit(self) -> FocusUnit:
-        if not self.display_label and not self.heading:
-            raise ValueError("focus unit requires a label or heading")
+    def validate_unit(self) -> StructureUnit:
+        if self.end_pdf_page < self.start_pdf_page:
+            raise ValueError("end_pdf_page must not precede start_pdf_page")
+        if self.kind in {"chapter", "part", "schedule"} and not (
+            self.display_label or self.heading
+        ):
+            raise ValueError(f"{self.kind} unit requires a label or heading")
         return self
 
 
-class FocusPlan(BaseModel):
+class StructurePlan(BaseModel):
+    """The planner's complete legal scope and semantic execution units."""
+
     model_config = ConfigDict(extra="forbid")
 
-    units: list[FocusUnit]
+    legal_start_pdf_page: int = Field(ge=1)
+    legal_end_pdf_page: int = Field(ge=1)
+    units: list[StructureUnit] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> StructurePlan:
+        if self.legal_end_pdf_page < self.legal_start_pdf_page:
+            raise ValueError("legal page range is reversed")
+        return self
+
+
+RepairAction = Literal[
+    "replace_unit",
+    "replan_document",
+    "abort_unresolved",
+]
+
+
+class RepairDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    unit_id: str
+    action: RepairAction
+    reason: str = Field(min_length=1)
+
+
+class RepairPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decisions: list[RepairDecision] = Field(min_length=1)
 
 
 def iter_block_texts(

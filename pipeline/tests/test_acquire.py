@@ -17,6 +17,20 @@ import openacts_pipeline.acquire as acquire_module
 from openacts_pipeline.acquire import AcquisitionError, acquire
 
 
+def test_progress_metadata_is_jsonl_on_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    acquire_module._print_progress({"event": "unit_completed", "unit_id": "part-01"})
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.err)
+    assert captured.out == ""
+    assert payload["type"] == "progress"
+    assert payload["event"] == "unit_completed"
+    assert payload["unit_id"] == "part-01"
+    assert payload["timestamp"].endswith("Z")
+
+
 def pdf_bytes(width: int = 72) -> bytes:
     output = BytesIO()
     writer = PdfWriter()

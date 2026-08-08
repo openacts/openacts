@@ -15,6 +15,9 @@ def test_structure_settings_are_typed_and_fail_loudly() -> None:
     assert settings.base_url == DEFAULT_DEEPSEEK_BASE_URL
     assert settings.primary_model == DEFAULT_PRIMARY_MODEL
     assert settings.request_timeout_seconds == 300
+    assert settings.concurrency == 4
+    assert settings.max_repair_rounds == 2
+    assert settings.max_total_tokens == 2_000_000
 
     with pytest.raises(PipelineError) as missing:
         StructureSettings.from_env({})
@@ -28,3 +31,12 @@ def test_structure_settings_are_typed_and_fail_loudly() -> None:
             }
         )
     assert invalid.value.code == "invalid_configuration"
+
+    with pytest.raises(PipelineError) as invalid_concurrency:
+        StructureSettings.from_env(
+            {
+                "DEEPSEEK_API_KEY": "secret",
+                "OPENACTS_STRUCTURE_CONCURRENCY": "0",
+            }
+        )
+    assert invalid_concurrency.value.code == "invalid_configuration"

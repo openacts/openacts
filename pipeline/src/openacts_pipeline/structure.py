@@ -2,24 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
+import fcntl
 import hashlib
 import json
 import re
 import time
 import unicodedata
 import uuid
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
 from openai import AsyncOpenAI
-from pydantic import BaseModel
-from pydantic_ai import Agent, ModelRetry, ToolOutput
+from pydantic import BaseModel, ValidationError
+from pydantic_ai import Agent, ModelRetry, RunUsage, ToolOutput, UsageLimits
 from pydantic_ai.exceptions import (
+    IncompleteToolCall,
     ModelAPIError,
     ModelHTTPError,
     UnexpectedModelBehavior,
+    UsageLimitExceeded,
 )
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.profiles.openai import OpenAIModelProfile
@@ -32,163 +36,53 @@ from openacts_pipeline.common import (
     write_json_result,
 )
 from openacts_pipeline.config import DEFAULT_PRIMARY_MODEL, StructureSettings
+from openacts_pipeline.structure_audit import (
+    MARKER_LABEL,
+    audit_materialized_provisions,
+)
+from openacts_pipeline.structure_prompts import (
+    CRITIC_INSTRUCTIONS,
+    PLAN_INSTRUCTIONS,
+    SYSTEM_INSTRUCTIONS,
+)
+from openacts_pipeline.structure_runtime import (
+    ModelRun,
+    ModelRunner,
+    ProgressReporter,
+    RejectedModelOutput,
+    StructureDeps,
+    run_structure_graph,
+)
 from openacts_pipeline.structure_schema import (
     DraftListBlock,
     DraftTableBlock,
     DraftTextBlock,
-    FocusPlan,
-    FocusUnit,
+    RepairPlan,
     StructureDraft,
+    StructurePlan,
+    StructureUnit,
     iter_block_pages,
     iter_block_texts,
     materialize_provisions,
     validate_table,
 )
 
-STRUCTURE_VERSION = 3
+STRUCTURE_VERSION = 6
 SUPPORTED_EXTRACTION_VERSIONS = {1, 2}
-PROMPT_VERSION = 15
+PROMPT_VERSION = 24
 MAX_OUTPUT_TOKENS = 384_000
 TRANSIENT_MODEL_STATUSES = {408, 429, 500, 502, 503, 504}
 
-
-@dataclass(frozen=True)
-class ModelRun:
-    output: BaseModel
-    model: str
-    output_mode: str
-    latency_seconds: float
-    usage: dict[str, int]
+# Compatibility for callers and preserved tests that inspect rejected drafts.
+_RejectedModelOutput = RejectedModelOutput
 
 
-ModelRunner = Callable[
-    [
-        str,
-        StructureSettings,
-        str,
-        type[BaseModel],
-        Callable[[BaseModel], None] | None,
-    ],
-    ModelRun,
-]
-
-
-SYSTEM_INSTRUCTIONS = """Transform the full raw text of one Nigerian legislative
-PDF into complete structured legal data. This is reconstruction and structural
-extraction, not summarisation, interpretation, or metadata-only outlining.
-
-INPUT AND FIDELITY
-The user supplies the entire raw PDF text. Each page starts with a marker such
-as `--- PDF PAGE 7 ---`. Reconstruct the printed legal reading order from text
-that may have line wraps, split words, marginal headings after body text,
-multi-column extraction, and repeated running matter. Remove page furniture,
-running headers, footers, and printed page numbers. Repair only mechanical
-extraction artefacts such as `DA TA`, `f )`, or a word split at a line break.
-Never silently modernise, paraphrase, complete, or legally reinterpret wording.
-
-COMPLETE WORDING
-Return the complete wording of every requested provision. Never summarise,
-shorten, omit, or replace wording with a heading. A node's content_blocks contain
-only wording directly owned by that node: exclude its display label, heading,
-and all wording owned by child nodes. Introductory wording before child nodes
-belongs to the parent; each child contains its own wording. Containers may have
-no content. Every leaf that visibly contains wording must return that wording.
-
-STRUCTURE
-Use only these canonical node types: document_title, long_title, arrangement,
-preamble, enacting_formula, part, chapter, division, cross_heading, section,
-subsection, paragraph, subparagraph, definition, schedule, schedule_part,
-schedule_paragraph, schedule_subparagraph, table, form, authentication, and
-explanatory_note. Do not emit arrangement or table-of-contents entries; derive
-navigation from the operative text. Preserve visible labels and headings
-separately. Return nodes as a tree in legal reading order: each node's direct
-descendants go in its `children` array and only document-level roots go in the
-top-level `nodes` array.
-
-Every printed structural marker creates its own node. In particular, each `(1)`,
-`(2)`, `(a)`, `(b)`, `(i)`, and similar addressable marker must become a
-subsection, paragraph, or subparagraph node with the marker in display_label.
-Never leave such a marker at the start of a text block or turn addressable legal
-paragraphs into list items. Given `PART I 1.—(1) Intro — (a) First`, return one
-top-level Part whose children contain Section 1, whose children contain
-Subsection (1), whose children contain Paragraph (a). The section has no text;
-the subsection owns `Intro —`; the paragraph owns `First`:
-`{"nodes":[{"node_type":"part","display_label":"PART I","pdf_page":1,
-"children":[{"node_type":"section","display_label":"1.","pdf_page":1,
-"children":[{"node_type":"subsection","display_label":"(1)","pdf_page":1,
-"content_blocks":[{"kind":"text","text":"Intro —","pdf_pages":[1]}],
-"children":[{"node_type":"paragraph","display_label":"(a)","pdf_page":1,
-"content_blocks":[{"kind":"text","text":"First","pdf_pages":[1]}]}]}]}]}]}`.
-When a section has subsection children, its paragraphs must be children of the
-applicable subsection, never siblings of it.
-
-Definitions may also own marked paragraphs. Given `"competent authority"
-includes — (a) First; or (b) Second;`, return one definition whose own text is
-only `"competent authority" includes —` and whose children are Paragraph (a)
-and Paragraph (b), each owning its complete wording. Never flatten those
-markers and their wording into the definition's text block.
-
-Within each Schedule, use this hierarchy when the printed levels exist:
-schedule -> optional schedule_part -> schedule_paragraph ->
-schedule_subparagraph -> paragraph -> subparagraph. The first parenthesised
-subdivision beneath a numbered schedule paragraph is a schedule_subparagraph
-whether its marker is `(1)` or `(a)`. Preserve the printed Schedule label, such
-as `SCHEDULE`, `FIRST SCHEDULE`, or `SECOND SCHEDULE`, exactly in display_label.
-
-Do not copy a child's introductory wording into its parent. Keep an unnumbered
-proviso beginning `Provided that` inside the existing containing node's
-content_blocks array, for example
-`{"kind":"text","text":"Provided that ...","pdf_pages":[8]}`. Never append it
-to the nodes array and never invent a `node_type` named `text`. A proviso with a
-printed structural marker uses the actual paragraph or subparagraph node.
-
-`display_label` contains only a printed marker such as `PART II`, `25.`, `(2)`,
-or `(a)`. `heading` contains only its descriptive marginal or inline heading.
-Put long-title wording, enacting wording, signatures, authentication wording,
-and explanatory wording in content_blocks rather than disguising them as
-headings. Use the operative occurrence once; ignore duplicate cover titles,
-Gazette furniture, and entries that appear only in an arrangement.
-
-CONTENT BLOCKS
-Use text, quoted_text, formula, or signature blocks for continuous wording. Use
-a list block only for an unaddressable printed list such as bullets; decimal,
-alphabetic, and Roman legal markers are always Provision nodes. Use a table
-block for a logical grid rather than flattening it. Set column_count,
-header_row_count, and rows as a rectangular matrix in printed reading order.
-Each matrix cell is its complete text, or null for a printed blank. Do not emit
-cell IDs, roles, spans, or header references; the pipeline derives those. The
-node pdf_page is where its own label, heading, or wording begins.
-caption_pdf_pages and every other pdf_pages array cite the pages containing
-that exact material.
-
-Before returning, confirm that the requested unit is complete, every word is
-owned exactly once, every node is nested under its direct parent, repeated
-labels under different parents remain distinct, tables remain tables, and all
-page evidence exists in the supplied document."""
-
-OUTLINE_SCOPE = """Discover every operative Part and Schedule in the document.
-Return only FocusPlan units in legal reading order. Do not return sections,
-content blocks, arrangement entries, front matter, authentication, explanatory
-matter, or tables. If the operative body has no Parts, return no Part units."""
-
-FRONT_SCOPE = """Return only the complete front matter before the operative body,
-including the document title, long title, preamble, and enacting formula when
-printed. Return complete wording in content_blocks. Do not return arrangement
-entries, Parts, sections, Schedules, authentication, or back matter. Return an
-empty nodes array when no front matter exists."""
-
-BODY_SCOPE = """Return only the complete operative body and every descendant.
-The discovery pass found no Part containers. Include all exact wording. Do not
-return front matter, Schedules, authentication, explanatory matter, or
-arrangement entries."""
-
-FRONT_NODE_TYPES = {
+DOCUMENT_NODE_TYPES = {
     "document_title",
     "long_title",
     "preamble",
     "enacting_formula",
-}
-BODY_NODE_TYPES = {
+    "part",
     "chapter",
     "division",
     "cross_heading",
@@ -199,18 +93,44 @@ BODY_NODE_TYPES = {
     "definition",
     "table",
     "form",
-}
-PART_NODE_TYPES = BODY_NODE_TYPES | {"part"}
-SCHEDULE_NODE_TYPES = {
     "schedule",
     "schedule_part",
     "schedule_paragraph",
     "schedule_subparagraph",
-    "paragraph",
-    "subparagraph",
-    "cross_heading",
-    "table",
-    "form",
+}
+FRONT_NODE_TYPES = {
+    "document_title",
+    "long_title",
+    "preamble",
+    "enacting_formula",
+}
+BODY_NODE_TYPES = (
+    DOCUMENT_NODE_TYPES
+    - FRONT_NODE_TYPES
+    - {
+        "schedule",
+        "schedule_part",
+        "schedule_paragraph",
+        "schedule_subparagraph",
+    }
+)
+UNIT_NODE_TYPES = {
+    "front_matter": FRONT_NODE_TYPES,
+    "body": BODY_NODE_TYPES,
+    "chapter": BODY_NODE_TYPES,
+    "part": BODY_NODE_TYPES,
+    "schedule": {
+        "schedule",
+        "schedule_part",
+        "schedule_paragraph",
+        "schedule_subparagraph",
+        "paragraph",
+        "subparagraph",
+        "definition",
+        "cross_heading",
+        "table",
+        "form",
+    },
 }
 CONTENT_OPTIONAL_LEAVES = {
     "document_title",
@@ -226,6 +146,16 @@ ADDRESSABLE_MARKER = re.compile(
     r"(?:\(\d+[a-z]?\)|\([a-z]\)|\([ivxlcdm]+\)|\d+[a-z]?\.)\s+",
     re.IGNORECASE,
 )
+PLAN_SCOPE_MARKER = re.compile(
+    r"(?m)^[ \t]*(?:\d+[a-z]?\.[ \t]*(?:[—–-][ \t]*)?)?"
+    r"\((?:\d+[a-z]?|[a-z]+|[ivxlcdm]+)[ \t]*\)",
+    re.IGNORECASE,
+)
+EXCLUDED_PLAN_HEADING = re.compile(
+    r"(?im)^[ \t]*(foreword|preface|arrangement of "
+    r"(?:sections|articles|regulations|rules)|table of contents|"
+    r"explanatory (?:memorandum|note))[ \t]*$"
+)
 STRUCTURAL_LIST_STYLES = {
     "decimal",
     "lower_alpha",
@@ -234,12 +164,12 @@ STRUCTURAL_LIST_STYLES = {
     "upper_roman",
 }
 PARENT_NODE_TYPES = {
-    "section": {"part", "chapter", "division"},
+    "section": {"part", "chapter", "division", "cross_heading"},
     "subsection": {"section"},
     "paragraph": {"section", "subsection", "definition", "schedule_subparagraph"},
     "subparagraph": {"paragraph"},
     "schedule_part": {"schedule"},
-    "schedule_paragraph": {"schedule", "schedule_part"},
+    "schedule_paragraph": {"schedule", "schedule_part", "cross_heading"},
     "schedule_subparagraph": {"schedule_paragraph"},
 }
 PARENT_REQUIRED_NODE_TYPES = set(PARENT_NODE_TYPES) - {"section"}
@@ -329,16 +259,24 @@ def build_raw_text(pages: list[dict[str, Any]]) -> str:
     )
 
 
-def _model(name: str, settings: StructureSettings) -> OpenAIChatModel:
-    client = AsyncOpenAI(
+def _client(settings: StructureSettings) -> AsyncOpenAI:
+    return AsyncOpenAI(
         base_url=settings.base_url,
         api_key=settings.api_key,
         max_retries=0,
         timeout=settings.request_timeout_seconds,
     )
+
+
+def _model(
+    name: str,
+    settings: StructureSettings,
+    *,
+    client: AsyncOpenAI | None = None,
+) -> OpenAIChatModel:
     return OpenAIChatModel(
         name,
-        provider=OpenAIProvider(openai_client=client),
+        provider=OpenAIProvider(openai_client=client or _client(settings)),
         profile=DEEPSEEK_PROFILE,
     )
 
@@ -352,18 +290,55 @@ def _usage(result: Any) -> dict[str, int]:
     }
 
 
-def _run_agent(
+def _recover_trailing_json_delimiters(
+    error: UnexpectedModelBehavior, output_type: type[BaseModel]
+) -> BaseModel | None:
+    cause = error.__cause__
+    if not isinstance(cause, ValidationError):
+        return None
+    for issue in cause.errors(include_url=False):
+        raw = issue.get("input")
+        if issue.get("type") != "json_invalid" or not isinstance(raw, str):
+            continue
+        try:
+            start = len(raw) - len(raw.lstrip())
+            decoded, end = json.JSONDecoder().raw_decode(raw, idx=start)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        trailing = raw[end:].strip()
+        if not trailing or any(character not in "]}" for character in trailing):
+            continue
+        try:
+            return output_type.model_validate(decoded)
+        except ValidationError:
+            continue
+    return None
+
+
+async def _run_agent(
     raw_text: str,
     settings: StructureSettings,
     scope: str,
     output_type: type[BaseModel],
-    validate: Callable[[BaseModel], None] | None = None,
+    validate: Any = None,
+    model: OpenAIChatModel | None = None,
 ) -> ModelRun:
+    rejected_output: BaseModel | None = None
+    validation_error: PipelineError | None = None
+    instructions = (
+        PLAN_INSTRUCTIONS
+        if output_type is StructurePlan
+        else CRITIC_INSTRUCTIONS
+        if output_type is RepairPlan
+        else SYSTEM_INSTRUCTIONS
+    )
     agent = Agent(
-        _model(settings.primary_model, settings),
-        output_type=ToolOutput(output_type, strict=False),
-        instructions=f"{SYSTEM_INSTRUCTIONS}\n\nREQUEST SCOPE\n{scope}",
-        retries=2,
+        model or _model(settings.primary_model, settings),
+        output_type=ToolOutput(output_type, strict=False, max_retries=0),
+        instructions=f"{instructions}\n\nREQUEST SCOPE\n{scope}",
+        # Repair is a fresh graph pass. In-conversation retries would replay a
+        # rejected legal tree into the next request and waste the context window.
+        retries=0,
         model_settings={
             "temperature": 0,
             "max_tokens": MAX_OUTPUT_TOKENS,
@@ -374,15 +349,23 @@ def _run_agent(
 
         @agent.output_validator
         def validate_source(output: BaseModel) -> BaseModel:
+            nonlocal rejected_output, validation_error
             try:
                 validate(output)
             except PipelineError as exc:
+                rejected_output = output
+                validation_error = exc
                 raise ModelRetry(f"{exc.code}: {exc}") from exc
             return output
 
     started = time.perf_counter()
+    run_usage = RunUsage()
     try:
-        result = agent.run_sync(raw_text)
+        result = await agent.run(
+            raw_text,
+            usage=run_usage,
+            usage_limits=UsageLimits(request_limit=1),
+        )
         output = result.output
         usage = _usage(result)
     except ModelHTTPError as exc:
@@ -393,10 +376,55 @@ def _run_agent(
             f"{settings.primary_model} returned HTTP {exc.status_code}: {detail}",
             retryable=retryable,
         ) from exc
+    except UsageLimitExceeded as exc:
+        raise PipelineError(
+            "model_usage_limit",
+            f"{settings.primary_model} exceeded the single-request agent limit "
+            f"after {run_usage.requests} request(s), {run_usage.input_tokens} input "
+            f"tokens, and {run_usage.output_tokens} output tokens: {exc}",
+        ) from exc
     except UnexpectedModelBehavior as exc:
+        if rejected_output is not None and validation_error is not None:
+            raise RejectedModelOutput(
+                settings.primary_model,
+                rejected_output,
+                validation_error,
+            ) from exc
+        if isinstance(exc, IncompleteToolCall):
+            raise PipelineError(
+                "model_output_truncated",
+                f"{settings.primary_model} exhausted its output token budget: {exc}",
+                retryable=True,
+            ) from exc
+        recovered = _recover_trailing_json_delimiters(exc, output_type)
+        if recovered is not None:
+            if validate is not None:
+                try:
+                    validate(recovered)
+                except PipelineError as validation_exc:
+                    raise RejectedModelOutput(
+                        settings.primary_model,
+                        recovered,
+                        validation_exc,
+                    ) from exc
+            return ModelRun(
+                output=recovered,
+                model=settings.primary_model,
+                output_mode="tool_recovered_trailing_delimiters",
+                latency_seconds=round(time.perf_counter() - started, 3),
+                usage={
+                    "requests": run_usage.requests,
+                    "input_tokens": run_usage.input_tokens,
+                    "output_tokens": run_usage.output_tokens,
+                },
+            )
+        detail = str(exc)
+        if exc.__cause__ is not None:
+            detail += f"; validation cause: {exc.__cause__}"
+        detail = re.sub(r"\s+", " ", detail)[:2000]
         raise PipelineError(
             "model_invalid_output",
-            f"{settings.primary_model} did not return valid structured output",
+            f"{settings.primary_model} did not return valid structured output: {detail}",
             retryable=True,
         ) from exc
     except ModelAPIError as exc:
@@ -416,14 +444,14 @@ def _run_agent(
     )
 
 
-def _run_primary(
+async def _run_primary(
     raw_text: str,
     settings: StructureSettings,
     scope: str,
     output_type: type[BaseModel],
-    validate: Callable[[BaseModel], None] | None = None,
+    validate: Any = None,
 ) -> ModelRun:
-    return _run_agent(raw_text, settings, scope, output_type, validate)
+    return await _run_agent(raw_text, settings, scope, output_type, validate)
 
 
 def _normalized(value: str) -> str:
@@ -455,10 +483,18 @@ def _hides_addressable_marker(block: Any) -> bool:
     if isinstance(block, DraftTextBlock):
         return ADDRESSABLE_MARKER.search(block.text) is not None
     if isinstance(block, DraftListBlock):
-        return block.marker_style in STRUCTURAL_LIST_STYLES or any(
-            _hides_addressable_marker(child)
-            for item in block.items
-            for child in item.content_blocks
+        return (
+            block.marker_style in STRUCTURAL_LIST_STYLES
+            or any(
+                item.label is not None
+                and MARKER_LABEL.fullmatch(item.label.strip()) is not None
+                for item in block.items
+            )
+            or any(
+                _hides_addressable_marker(child)
+                for item in block.items
+                for child in item.content_blocks
+            )
         )
     return False
 
@@ -469,30 +505,9 @@ def _walk_nodes(nodes: Iterable[Any]) -> Iterable[Any]:
         yield from _walk_nodes(node.children)
 
 
-def _validate_focus_plan(plan: FocusPlan, *, page_count: int) -> None:
-    seen: set[tuple[object, ...]] = set()
-    previous_page = 0
-    for unit in plan.units:
-        if unit.pdf_page > page_count:
-            raise PipelineError(
-                "invalid_structure_output", "focus unit cites a nonexistent PDF page"
-            )
-        identity = (
-            unit.kind,
-            _normalized(unit.display_label or ""),
-            _normalized(unit.heading or ""),
-            unit.pdf_page,
-        )
-        if identity in seen:
-            raise PipelineError(
-                "invalid_structure_output", "focus plan contains a duplicate unit"
-            )
-        if unit.pdf_page < previous_page:
-            raise PipelineError(
-                "invalid_structure_output", "focus units are not in legal order"
-            )
-        seen.add(identity)
-        previous_page = unit.pdf_page
+def _node_reference(node: Any) -> str:
+    visible = node.display_label or node.heading
+    return f"{node.node_type} {visible}" if visible else f"unnumbered {node.node_type}"
 
 
 def _validate_draft(
@@ -501,8 +516,18 @@ def _validate_draft(
     allowed_types: set[str],
     page_count: int,
     pages: list[dict[str, Any]],
-    target: FocusUnit | None = None,
+    target: StructureUnit | None = None,
 ) -> None:
+    if target is not None and target.kind == "schedule":
+        # Printed Parts and numbered provisions retain their meaning inside a
+        # Schedule; normalize provider vocabulary to the canonical context.
+        for node in _walk_nodes(draft.nodes):
+            if node.node_type == "part":
+                node.node_type = "schedule_part"
+            elif node.node_type == "section":
+                node.node_type = "schedule_paragraph"
+            elif node.node_type == "subsection":
+                node.node_type = "schedule_subparagraph"
     all_nodes = list(_walk_nodes(draft.nodes))
     unexpected = sorted(
         {node.node_type for node in all_nodes if node.node_type not in allowed_types}
@@ -512,29 +537,31 @@ def _validate_draft(
             "invalid_structure_output",
             "pass emitted out-of-scope node types: " + ", ".join(unexpected),
         )
-    if target is not None:
+    if target is not None and target.kind in {"chapter", "part", "schedule"}:
         if len(draft.nodes) != 1:
             raise PipelineError(
                 "incomplete_structure_output",
-                f"{target.kind} pass must return exactly one root",
+                f"{target.unit_id} must return exactly one root",
             )
-        first = draft.nodes[0]
+        root = draft.nodes[0]
         if (
-            first.node_type != target.kind
-            or _normalized(first.display_label or "")
+            root.node_type != target.kind
+            or _normalized(root.display_label or "")
             != _normalized(target.display_label or "")
-            or _normalized(first.heading or "") != _normalized(target.heading or "")
-            or first.pdf_page != target.pdf_page
+            or _normalized(root.heading or "") != _normalized(target.heading or "")
+            or root.pdf_page != target.start_pdf_page
         ):
             raise PipelineError(
                 "invalid_structure_output",
-                f"{target.kind} pass did not repeat its exact root first",
+                f"{target.unit_id} did not repeat its planned root exactly",
             )
 
     def validate_node(
         node: Any,
         parent: Any | None,
         ancestor_texts: set[str],
+        parent_path: tuple[str, ...],
+        previous_sibling: Any | None,
     ) -> None:
         child_types = {child.node_type for child in node.children}
         if node.node_type == "section" and {"subsection", "paragraph"}.issubset(
@@ -564,6 +591,19 @@ def _validate_draft(
         ):
             raise PipelineError(
                 "invalid_structure_output", "structured output cites a nonexistent page"
+            )
+        if target is not None and (
+            node.pdf_page < target.start_pdf_page
+            or node.pdf_page > target.end_pdf_page
+            or any(
+                page < target.start_pdf_page or page > target.end_pdf_page
+                for block in node.content_blocks
+                for page in iter_block_pages(block)
+            )
+        ):
+            raise PipelineError(
+                "invalid_structure_output",
+                f"{target.unit_id} cites a page outside its planned range",
             )
         if (
             not node.children
@@ -611,9 +651,19 @@ def _validate_draft(
                         r"\s*provided(?:\s+further)?\s+that\b", text, re.IGNORECASE
                     )
                 ):
+                    location = " > ".join(parent_path) or "the document root"
+                    previous = (
+                        f", immediately after {_node_reference(previous_sibling)}"
+                        if previous_sibling is not None
+                        else ""
+                    )
+                    excerpt = re.sub(r"\s+", " ", text).strip()[:160]
                     raise PipelineError(
                         "invalid_proviso_structure",
-                        "an unnumbered proviso must remain a content block",
+                        f"PDF page {node.pdf_page} has an unnumbered proviso node "
+                        f"under {location}{previous}: {excerpt!r}. Remove the "
+                        "anonymous node and place this wording in the "
+                        "content_blocks of the provision it qualifies.",
                     )
                 if not _is_subsequence(
                     normalized_text, _normalized(_page_source(pages, pdf_pages))
@@ -623,51 +673,61 @@ def _validate_draft(
                         f"{description} is not recoverable from PDF pages {pdf_pages}",
                     )
         descendant_ancestors = ancestor_texts | own_texts
-        for child in node.children:
-            validate_node(child, node, descendant_ancestors)
+        node_path = (*parent_path, _node_reference(node))
+        for index, child in enumerate(node.children):
+            validate_node(
+                child,
+                node,
+                descendant_ancestors,
+                node_path,
+                node.children[index - 1] if index else None,
+            )
 
-    for root in draft.nodes:
-        validate_node(root, None, set())
+    for index, root in enumerate(draft.nodes):
+        validate_node(
+            root,
+            None,
+            set(),
+            (),
+            draft.nodes[index - 1] if index else None,
+        )
 
 
 def _validate_section_sequence(provisions: list[dict[str, Any]]) -> None:
-    previous: int | None = None
+    previous: tuple[int, str] | None = None
     for provision in provisions:
         if provision["node_type"] != "section" or not provision["display_label"]:
             continue
-        match = re.fullmatch(r"\s*(\d+)\.?\s*", provision["display_label"])
+        match = re.fullmatch(
+            r"\s*(\d+)([a-z]?)\.?\s*",
+            provision["display_label"],
+            re.IGNORECASE,
+        )
         if match is None:
             previous = None
             continue
-        current = int(match.group(1))
-        if previous is not None and current != previous + 1:
+        current = (int(match.group(1)), match.group(2).casefold())
+        if previous is None:
+            valid = True
+        else:
+            previous_number, previous_suffix = previous
+            current_number, current_suffix = current
+            next_inserted_suffix = (
+                chr(ord(previous_suffix) + 1) if previous_suffix else "a"
+            )
+            valid = (
+                current_number == previous_number
+                and current_suffix == next_inserted_suffix
+            ) or (current_number == previous_number + 1 and current_suffix == "")
+        if not valid:
+            assert previous is not None
             raise PipelineError(
                 "incomplete_structure_output",
-                f"section sequence jumps from {previous} to {current}",
+                "section sequence jumps from "
+                f"{previous[0]}{previous[1].upper()} to "
+                f"{current[0]}{current[1].upper()}",
             )
         previous = current
-
-
-def _target_scope(target: FocusUnit) -> str:
-    label = json.dumps(target.display_label or target.heading, ensure_ascii=False)
-    heading = (
-        f" with heading {json.dumps(target.heading, ensure_ascii=False)}"
-        if target.display_label and target.heading
-        else ""
-    )
-    descendants = (
-        "every descendant and all wording directly owned by each node"
-        if target.kind == "part"
-        else "every Schedule subdivision and all wording directly owned by each node"
-    )
-    return (
-        f"Return only the complete operative {target.kind} {label}{heading}, beginning "
-        f"on PDF page {target.pdf_page}, {descendants}. Return that root as the "
-        "only top-level node, with the exact label, heading, and PDF page. Nest "
-        "every descendant under its direct parent. Do not return front "
-        "matter, other Parts or Schedules, authentication, explanatory matter, "
-        "arrangement entries, or running matter."
-    )
 
 
 def _work_key(source_id: str, settings: StructureSettings) -> str:
@@ -684,102 +744,197 @@ def _work_key(source_id: str, settings: StructureSettings) -> str:
     return f"{source_id.removeprefix('sha256:')[:12]}-{digest}"
 
 
-def _run_checkpointed(
-    *,
-    cache_root: Path,
-    work_key: str,
-    pass_index: int,
-    pass_name: str,
-    source_id: str,
-    raw_text: str,
-    settings: StructureSettings,
-    scope: str,
-    output_type: type[BaseModel],
-    runner: ModelRunner,
-    validate: Callable[[BaseModel], None],
-) -> tuple[ModelRun, bool]:
-    relative_path = (
-        Path("structure-work") / work_key / f"{pass_index:03d}-{pass_name}.json"
-    )
-    path = cache_root / relative_path
-    scope_hash = hashlib.sha256(scope.encode()).hexdigest()
-    if path.exists():
-        try:
-            checkpoint = json.loads(path.read_text(encoding="utf-8"))
-            if (
-                checkpoint["stage"] != "structure_pass"
-                or checkpoint["structure_version"] != STRUCTURE_VERSION
-                or checkpoint["prompt_version"] != PROMPT_VERSION
-                or checkpoint["source_id"] != source_id
-                or checkpoint["configured_model"] != settings.primary_model
-                or checkpoint["pass_index"] != pass_index
-                or checkpoint["pass_name"] != pass_name
-                or checkpoint["scope_sha256"] != scope_hash
-                or checkpoint["output_type"] != output_type.__name__
-            ):
-                raise ValueError("checkpoint metadata does not match this pass")
-            output = output_type.model_validate(checkpoint["output"])
-            run_data = checkpoint["model_run"]
-            run = ModelRun(
-                output=output,
-                model=run_data["model"],
-                output_mode=run_data["output_mode"],
-                latency_seconds=run_data["latency_seconds"],
-                usage=run_data["usage"],
-            )
-            validate(output)
-            return run, True
-        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise PipelineError(
-                "invalid_structure_checkpoint", f"cannot resume {pass_name}: {exc}"
-            ) from exc
-
-    run = runner(raw_text, settings, scope, output_type, validate)
-    if not isinstance(run.output, output_type):
+def _validate_plan(plan: StructurePlan, pages: list[dict[str, Any]]) -> None:
+    page_count = len(pages)
+    if len(plan.units) > 64:
         raise PipelineError(
-            "model_invalid_output", f"{pass_name} used the wrong schema"
+            "invalid_structure_plan", "plan exceeds the 64-unit execution limit"
         )
-    validate(run.output)
-    checkpoint = {
-        "stage": "structure_pass",
-        "status": "success",
-        "structure_version": STRUCTURE_VERSION,
-        "prompt_version": PROMPT_VERSION,
-        "source_id": source_id,
-        "configured_model": settings.primary_model,
-        "pass_index": pass_index,
-        "pass_name": pass_name,
-        "scope_sha256": scope_hash,
-        "output_type": output_type.__name__,
-        "model_run": {
-            "model": run.model,
-            "output_mode": run.output_mode,
-            "latency_seconds": run.latency_seconds,
-            "usage": run.usage,
-        },
-        "output": run.output.model_dump(mode="json"),
-    }
-    write_json_result(cache_root, checkpoint, relative_path)
-    return run, False
+    if plan.legal_end_pdf_page > page_count:
+        raise PipelineError(
+            "invalid_structure_plan", "legal range cites a nonexistent PDF page"
+        )
+    for previous, unit in zip(plan.units, plan.units[1:], strict=False):
+        if unit.start_pdf_page != previous.end_pdf_page + 1:
+            continue
+        page_source = _page_source(pages, [unit.start_pdf_page])
+        lines = page_source.splitlines()
+        identifier_line = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if any(
+                    value and _normalized(value) in _normalized(line)
+                    for value in (unit.display_label, unit.heading)
+                )
+            ),
+            None,
+        )
+        if identifier_line is not None and PLAN_SCOPE_MARKER.search(
+            "\n".join(lines[:identifier_line])
+        ):
+            # Both workers need the physical page when the prior root continues
+            # above the next root's heading.
+            previous.end_pdf_page = unit.start_pdf_page
+    issues: list[str] = []
+    for page in pages:
+        if not (
+            plan.legal_start_pdf_page <= page["pdf_page"] <= plan.legal_end_pdf_page
+        ):
+            continue
+        excluded_heading = EXCLUDED_PLAN_HEADING.search(page["text"])
+        if excluded_heading:
+            issues.append(
+                f"planned legal range includes excluded "
+                f"{excluded_heading.group(1).casefold()} on PDF page "
+                f"{page['pdf_page']}"
+            )
+    outside_markers = [
+        page["pdf_page"]
+        for page in pages
+        if not (
+            plan.legal_start_pdf_page <= page["pdf_page"] <= plan.legal_end_pdf_page
+        )
+        and PLAN_SCOPE_MARKER.search(page["text"])
+    ]
+    if outside_markers:
+        issues.append(
+            "addressable legal markers fall outside the planned legal range on PDF "
+            f"pages {outside_markers[:10]}"
+        )
+    first_unit = plan.units[0]
+    last_unit = plan.units[-1]
+    if plan.legal_start_pdf_page != first_unit.start_pdf_page:
+        issues.append(
+            f"legal_start_pdf_page {plan.legal_start_pdf_page} does not match first "
+            f"unit start_pdf_page {first_unit.start_pdf_page}"
+        )
+    if plan.legal_end_pdf_page != last_unit.end_pdf_page:
+        issues.append(
+            f"legal_end_pdf_page {plan.legal_end_pdf_page} does not match last unit "
+            f"end_pdf_page {last_unit.end_pdf_page}"
+        )
+    identities: set[str] = set()
+    previous: StructureUnit | None = None
+    covered: set[int] = set()
+    for unit in plan.units:
+        if unit.unit_id in identities:
+            issues.append(f"duplicate unit_id: {unit.unit_id}")
+        if (
+            unit.start_pdf_page < plan.legal_start_pdf_page
+            or unit.end_pdf_page > plan.legal_end_pdf_page
+        ):
+            issues.append(f"{unit.unit_id} falls outside the legal page range")
+        if previous is not None:
+            if unit.start_pdf_page < previous.end_pdf_page:
+                issues.append(
+                    "units overlap by more than their shared boundary page",
+                )
+            if unit.start_pdf_page > previous.end_pdf_page + 1:
+                issues.append(
+                    f"page gap between {previous.unit_id} and {unit.unit_id}",
+                )
+        page_source = _page_source(pages, [unit.start_pdf_page])
+        for field, value in (
+            ("display_label", unit.display_label),
+            ("heading", unit.heading),
+        ):
+            if value and not _is_subsequence(
+                _normalized(value), _normalized(page_source)
+            ):
+                issues.append(
+                    f"{unit.unit_id} {field} {value!r} is not recoverable from "
+                    f"starting PDF page {unit.start_pdf_page}; use exact printed "
+                    "text or null"
+                )
+        identities.add(unit.unit_id)
+        covered.update(range(unit.start_pdf_page, unit.end_pdf_page + 1))
+        previous = unit
+    expected = set(range(plan.legal_start_pdf_page, plan.legal_end_pdf_page + 1))
+    if covered != expected:
+        missing = sorted(expected - covered)
+        issues.append(f"planned units do not cover legal pages: {missing[:10]}")
+    if issues:
+        detail = "; ".join(issues[:20])
+        if len(issues) > 20:
+            detail += f"; and {len(issues) - 20} more issue(s)"
+        raise PipelineError(
+            "invalid_structure_plan",
+            detail,
+        )
 
 
-def _pass_record(
-    pass_name: str,
-    run: ModelRun,
-    reused: bool,
-    target: FocusUnit | None = None,
-) -> dict[str, Any]:
-    record: dict[str, Any] = {
-        "pass": pass_name,
-        "model": run.model,
-        "output_mode": run.output_mode,
-        "checkpoint_reused": reused,
-        "latency_seconds": run.latency_seconds,
-        "usage": run.usage,
-    }
-    if target is not None:
-        record["target"] = target.model_dump(mode="json")
-    return record
+def _plan_scope(previous_plan: StructurePlan | None, audit: Any | None) -> str:
+    if previous_plan is None:
+        return "Plan the complete document according to the planning instructions."
+    audit_issues = [] if audit is None else audit.issues[:100]
+    return (
+        "The previous plan produced audit failures. Return a complete replacement "
+        "plan with corrected legal scope or semantic boundaries.\n"
+        f"PREVIOUS PLAN\n{previous_plan.model_dump_json()}\n"
+        f"AUDIT SUMMARY\n{json.dumps([issue.model_dump(mode='json') for issue in audit_issues], ensure_ascii=False)}"
+    )
+
+
+def _unit_scope(
+    unit: StructureUnit,
+    issues: list[Any],
+    previous_draft: StructureDraft | None,
+) -> str:
+    identity = json.dumps(
+        unit.display_label or unit.heading or unit.kind, ensure_ascii=False
+    )
+    if unit.kind == "front_matter":
+        target = (
+            "Return only the complete front matter in this page range: document "
+            "title, long title, preamble, and enacting formula when printed."
+        )
+    elif unit.kind == "body":
+        target = "Return the complete unparted operative body in this page range."
+    else:
+        target = (
+            f"Return only the complete {unit.kind} {identity} as the sole top-level "
+            "node, with every descendant and all directly owned wording. Repeat "
+            "its planned label, heading, and starting PDF page exactly."
+        )
+    scope = (
+        f"{target} The owned source is PDF pages {unit.start_pdf_page} through "
+        f"{unit.end_pdf_page}. Do not emit adjacent roots that merely share a "
+        "boundary page. Exclude running page furniture and bracketed editorial "
+        "cross-references or alteration notes."
+    )
+    if previous_draft is not None:
+        scope += (
+            "\n\nThis is a fresh full-replacement repair pass. Correct every audit "
+            "issue; do not return a patch and do not preserve an error merely "
+            "because it appeared in the prior draft.\nAUDIT ISSUES\n"
+            + json.dumps(
+                [issue.model_dump(mode="json") for issue in issues[:100]],
+                ensure_ascii=False,
+            )
+            + "\nPREVIOUS DRAFT\n"
+            + previous_draft.model_dump_json()
+        )
+    return scope
+
+
+@contextmanager
+def _structure_lock(cache_root: Path, work_key: str) -> Iterator[None]:
+    lock_path = cache_root / "structure-work" / work_key / ".lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w", encoding="utf-8") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise PipelineError(
+                "structure_run_locked",
+                f"another structure run is active for {work_key}",
+                retryable=True,
+            ) from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def structure(
@@ -789,6 +944,7 @@ def structure(
     cache_root: Path,
     settings: StructureSettings | None = None,
     primary_runner: ModelRunner = _run_primary,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     extraction, relative_input = _load_extraction(extraction_path, cache_root)
     raw_text = build_raw_text(extraction["pages"])
@@ -801,9 +957,11 @@ def structure(
             "source_id": extraction["source_id"],
             "models": {"primary": DEFAULT_PRIMARY_MODEL},
             "request": {
-                "strategy": "discovery_then_complete_units",
-                "each_pass_receives_full_text": True,
+                "strategy": "agent_planned_parallel_units_with_audit_repair",
+                "planner_receives_full_text": True,
+                "workers_receive_bounded_page_ranges": True,
                 "checkpoint_resume": True,
+                "deterministic_finish_gate": True,
                 "pdf_pages": [1, extraction["page_count"]],
                 "text_characters": len(raw_text),
             },
@@ -812,137 +970,192 @@ def structure(
     active_settings = settings or StructureSettings.from_env()
     started_at = utc_now()
     work_key = _work_key(extraction["source_id"], active_settings)
-    pass_index = 0
-    pass_records: list[dict[str, Any]] = []
-    drafts: list[StructureDraft] = []
+    if progress is not None:
+        progress(
+            {
+                "event": "structure_started",
+                "source_id": extraction["source_id"],
+                "pdf_pages": extraction["page_count"],
+                "text_characters": len(raw_text),
+                "model": active_settings.primary_model,
+                "concurrency": active_settings.concurrency,
+                "max_repair_rounds": active_settings.max_repair_rounds,
+                "work_key": work_key,
+            }
+        )
 
-    outline_run, reused = _run_checkpointed(
+    def pages_text(start_page: int, end_page: int) -> str:
+        return build_raw_text(
+            [
+                page
+                for page in extraction["pages"]
+                if start_page <= page["pdf_page"] <= end_page
+            ]
+        )
+
+    deps = StructureDeps(
         cache_root=cache_root,
         work_key=work_key,
-        pass_index=pass_index,
-        pass_name="outline",
         source_id=extraction["source_id"],
-        raw_text=raw_text,
+        pages=extraction["pages"],
+        page_count=extraction["page_count"],
         settings=active_settings,
-        scope=OUTLINE_SCOPE,
-        output_type=FocusPlan,
         runner=primary_runner,
-        validate=lambda output: _validate_focus_plan(
-            cast(FocusPlan, output), page_count=extraction["page_count"]
+        plan_scope=_plan_scope,
+        unit_scope=_unit_scope,
+        pages_text=pages_text,
+        validate_plan=lambda plan: _validate_plan(plan, extraction["pages"]),
+        validate_unit=lambda draft, unit: _validate_draft(
+            draft,
+            allowed_types=UNIT_NODE_TYPES[unit.kind],
+            page_count=extraction["page_count"],
+            pages=extraction["pages"],
+            target=unit,
         ),
+        structure_version=STRUCTURE_VERSION,
+        prompt_version=PROMPT_VERSION,
+        progress=progress,
     )
-    plan = cast(FocusPlan, outline_run.output)
-    pass_records.append(_pass_record("outline", outline_run, reused))
 
-    def run_draft(
-        pass_name: str,
-        scope: str,
-        allowed_types: set[str],
-        target: FocusUnit | None = None,
-    ) -> None:
-        nonlocal pass_index
-        pass_index += 1
-
-        def validate_output(output: BaseModel) -> None:
-            draft = StructureDraft.model_validate(output.model_dump(mode="json"))
-            _validate_draft(
-                draft,
-                allowed_types=allowed_types,
-                page_count=extraction["page_count"],
-                pages=extraction["pages"],
-                target=target,
+    async def execute_workflow():
+        if primary_runner is not _run_primary:
+            return await run_structure_graph(deps)
+        client = _client(active_settings)
+        try:
+            shared_model = _model(
+                active_settings.primary_model,
+                active_settings,
+                client=client,
             )
 
-        run, checkpoint_reused = _run_checkpointed(
-            cache_root=cache_root,
-            work_key=work_key,
-            pass_index=pass_index,
-            pass_name=pass_name,
-            source_id=extraction["source_id"],
-            raw_text=raw_text,
-            settings=active_settings,
-            scope=scope,
-            output_type=StructureDraft,
-            runner=primary_runner,
-            validate=validate_output,
-        )
-        drafts.append(StructureDraft.model_validate(run.output.model_dump(mode="json")))
-        pass_records.append(_pass_record(pass_name, run, checkpoint_reused, target))
+            async def shared_runner(
+                source_text: str,
+                runner_settings: StructureSettings,
+                scope: str,
+                output_type: type[BaseModel],
+                validate: Any = None,
+            ) -> ModelRun:
+                return await _run_agent(
+                    source_text,
+                    runner_settings,
+                    scope,
+                    output_type,
+                    validate,
+                    model=shared_model,
+                )
 
-    run_draft("front-matter", FRONT_SCOPE, FRONT_NODE_TYPES)
-    parts = [unit for unit in plan.units if unit.kind == "part"]
-    schedules = [unit for unit in plan.units if unit.kind == "schedule"]
-    if parts:
-        for number, target in enumerate(parts, start=1):
-            run_draft(
-                f"part-{number:02d}",
-                _target_scope(target),
-                PART_NODE_TYPES,
-                target,
+            deps.runner = shared_runner
+            return await run_structure_graph(deps)
+        finally:
+            await client.close()
+
+    with _structure_lock(cache_root, work_key):
+        workflow = asyncio.run(execute_workflow())
+        provisions, content_characters = materialize_provisions(
+            workflow.drafts, source_id=extraction["source_id"]
+        )
+        if not provisions:
+            raise PipelineError(
+                "incomplete_structure_output", "model emitted no Provision drafts"
             )
-    else:
-        run_draft("operative-body", BODY_SCOPE, BODY_NODE_TYPES)
-    for number, target in enumerate(schedules, start=1):
-        run_draft(
-            f"schedule-{number:02d}",
-            _target_scope(target),
-            SCHEDULE_NODE_TYPES,
-            target,
+        _validate_section_sequence(provisions)
+        final_audit = audit_materialized_provisions(
+            provisions,
+            pages=extraction["pages"],
+            legal_start_pdf_page=workflow.plan.legal_start_pdf_page,
+            legal_end_pdf_page=workflow.plan.legal_end_pdf_page,
         )
+        if progress is not None:
+            progress(
+                {
+                    "event": "materialized_audit_completed",
+                    "passed": final_audit.passed,
+                    "issues": len(final_audit.issues),
+                    "claimed_characters": final_audit.claimed_characters,
+                    "source_characters": final_audit.source_characters,
+                    "claimed_markers": final_audit.claimed_markers,
+                    "source_markers": final_audit.source_markers,
+                }
+            )
+        if not final_audit.passed:
+            audit_path = Path("structure-work") / work_key / "materialized-audit.json"
+            write_json_result(
+                cache_root,
+                {
+                    "stage": "structure_audit",
+                    "status": "failure",
+                    "source_id": extraction["source_id"],
+                    "report": final_audit.model_dump(mode="json"),
+                },
+                audit_path,
+            )
+            raise PipelineError(
+                "structure_audit_failed",
+                f"materialized structure failed {len(final_audit.issues)} audit "
+                f"checks; audit: {audit_path.as_posix()}",
+            )
 
-    provisions, content_characters = materialize_provisions(
-        drafts, source_id=extraction["source_id"]
-    )
-    if not provisions:
-        raise PipelineError(
-            "incomplete_structure_output", "model emitted no Provision drafts"
-        )
-    _validate_section_sequence(provisions)
-
-    usage = {
-        key: sum(record["usage"].get(key, 0) for record in pass_records)
-        for key in ("requests", "input_tokens", "output_tokens")
-    }
-    model_run = {
-        "model": active_settings.primary_model,
-        "output_mode": "tool",
-        "streaming": False,
-        "latency_seconds": round(
-            sum(record["latency_seconds"] for record in pass_records), 3
-        ),
-        "usage": usage,
-        "passes": pass_records,
-    }
-    summary = {
-        "passes": len(pass_records),
-        "checkpoints_reused": sum(
-            record["checkpoint_reused"] for record in pass_records
-        ),
-        "provisions": len(provisions),
-        "content_characters": content_characters,
-    }
-    artifact = {
-        "stage": "structure",
-        "status": "success",
-        "structure_version": STRUCTURE_VERSION,
-        "prompt_version": PROMPT_VERSION,
-        "started_at": iso_timestamp(started_at),
-        "finished_at": iso_timestamp(utc_now()),
-        "network_access": True,
-        "input_extraction": relative_input.as_posix(),
-        "source_id": extraction["source_id"],
-        "page_count": extraction["page_count"],
-        "model_run": model_run,
-        "provisions": provisions,
-        "summary": summary,
-    }
-    digest = extraction["source_id"].removeprefix("sha256:")
-    run_id = f"{started_at:%Y%m%dT%H%M%SZ}-{digest[:8]}-{uuid.uuid4().hex[:8]}"
-    write_json_result(cache_root, artifact, Path("structures") / f"{run_id}.json")
-    return {
-        "stage": artifact["stage"],
-        "status": artifact["status"],
-        "source_id": artifact["source_id"],
-        "summary": summary,
-        "result_path": artifact["result_path"],
-    }
+        pass_records = workflow.pass_records
+        usage = {
+            key: sum(record["usage"].get(key, 0) for record in pass_records)
+            for key in ("requests", "input_tokens", "output_tokens")
+        }
+        model_run = {
+            "model": active_settings.primary_model,
+            "output_mode": "tool",
+            "streaming": False,
+            "latency_seconds": round(
+                sum(record["latency_seconds"] for record in pass_records), 3
+            ),
+            "usage": usage,
+            "passes": pass_records,
+        }
+        summary = {
+            "passes": len(pass_records),
+            "units": len(workflow.plan.units),
+            "repair_rounds": workflow.repair_rounds,
+            "checkpoints_reused": sum(
+                record["checkpoint_reused"] for record in pass_records
+            ),
+            "provisions": len(provisions),
+            "content_characters": content_characters,
+            "source_characters": final_audit.source_characters,
+            "claimed_source_characters": final_audit.claimed_characters,
+            "source_markers": final_audit.source_markers,
+            "claimed_source_markers": final_audit.claimed_markers,
+        }
+        artifact = {
+            "stage": "structure",
+            "status": "success",
+            "structure_version": STRUCTURE_VERSION,
+            "prompt_version": PROMPT_VERSION,
+            "started_at": iso_timestamp(started_at),
+            "finished_at": iso_timestamp(utc_now()),
+            "network_access": True,
+            "input_extraction": relative_input.as_posix(),
+            "source_id": extraction["source_id"],
+            "page_count": extraction["page_count"],
+            "plan": workflow.plan.model_dump(mode="json"),
+            "audit": final_audit.model_dump(mode="json"),
+            "model_run": model_run,
+            "provisions": provisions,
+            "summary": summary,
+        }
+        digest = extraction["source_id"].removeprefix("sha256:")
+        run_id = f"{started_at:%Y%m%dT%H%M%SZ}-{digest[:8]}-{uuid.uuid4().hex[:8]}"
+        write_json_result(cache_root, artifact, Path("structures") / f"{run_id}.json")
+        if progress is not None:
+            progress(
+                {
+                    "event": "structure_completed",
+                    "result_path": artifact["result_path"],
+                    "summary": summary,
+                }
+            )
+        return {
+            "stage": artifact["stage"],
+            "status": artifact["status"],
+            "source_id": artifact["source_id"],
+            "summary": summary,
+            "result_path": artifact["result_path"],
+        }

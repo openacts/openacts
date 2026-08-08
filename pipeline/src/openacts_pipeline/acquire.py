@@ -564,6 +564,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.extraction,
                 execute=args.execute,
                 cache_root=DEFAULT_CACHE_ROOT,
+                progress=_print_progress if args.execute else None,
             )
         elif args.command == "candidate":
             result = candidate(
@@ -584,6 +585,21 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
+
+
+def _print_progress(metadata: dict[str, Any]) -> None:
+    print(
+        json.dumps(
+            {
+                "type": "progress",
+                "timestamp": iso_timestamp(utc_now()),
+                **metadata,
+            },
+            ensure_ascii=False,
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

@@ -102,13 +102,14 @@ writing an artifact:
 make structure EXTRACTION=source-cache/extractions/<run>.json
 ```
 
-The command validates the extraction and reports the request strategy. Every
-model pass receives all raw `pages[].text` in one string, marked with PDF page
-numbers; it does not receive the extraction JSON or local cache metadata. Draft
-Provisions use the canonical `node_type` vocabulary and canonical text, list,
-and table content-block shapes from `schemas/`.
+The command validates the extraction and reports the agent strategy. The
+planner receives raw `pages[].text` marked with PDF page numbers and identifies
+the inclusive legal range plus bounded front-matter, Chapter, top-level Part,
+unparted-body, and Schedule units. It does not receive extraction cache
+metadata. Draft Provisions use the canonical `node_type` vocabulary and
+canonical text, list, and table content-block shapes from `schemas/`.
 
-Schedule passes preserve printed labels and support the full legal nesting
+Schedule structures preserve printed labels and support the full legal nesting
 `schedule_paragraph` -> `schedule_subparagraph` -> `paragraph` ->
 `subparagraph`, with an optional `schedule_part` above the paragraph.
 
@@ -118,31 +119,54 @@ Add `DEEPSEEK_API_KEY` to the gitignored `pipeline/.env`, then explicitly run:
 make structure-execute EXTRACTION=source-cache/extractions/<run>.json
 ```
 
-The stage uses `deepseek-v4-pro` through the direct DeepSeek API with typed tool
-output, the model's 384,000-token maximum output budget, and up to two bounded
-output-correction retries. Thinking mode is disabled because DeepSeek does not
-allow the required structured-output tool choice while thinking is enabled.
-It discovers the document units, then reconstructs complete front matter, each
-operative Part or unparted body, and each Schedule. Authentication sheets,
-assent signatures, certification tables, and explanatory back matter are outside
-the corpus and are not sent through a separate structuring pass.
-Focused passes return the exact wording directly owned by every Provision,
-including structured lists and tables. Nested children preserve repeated legal
-labels under their exact parents; the pipeline then generates draft IDs, parent
-IDs, sibling order, block IDs, Source spans, and
-`machine_extracted` fidelity. The model, DeepSeek base URL, and request timeout
-can be overridden with `OPENACTS_PRIMARY_MODEL`,
-`OPENACTS_DEEPSEEK_BASE_URL`, and `OPENACTS_STRUCTURE_TIMEOUT_SECONDS`.
+The stage uses PydanticAI agents inside a typed Pydantic Graph workflow and pins
+one configured model for the run. `deepseek-v4-pro` is the default through the
+direct DeepSeek API. Thinking mode is disabled because DeepSeek does not allow
+the required structured-output tool choice while thinking is enabled. Every
+planner and worker receives its complete assigned source text directly; model
+conversations cannot loop through redundant source-reading tool calls.
 
-Every valid pass is checkpointed atomically under `source-cache/structure-work/`.
-Running the same source, model, and prompt again reuses those checkpoints and
-continues from the first unfinished pass. Invalid or source-unrecoverable model
-output fails the run instead of becoming a warning-filled success artifact.
+After planning, unit workers run concurrently and reconstruct the exact wording
+directly owned by every Provision, including structured lists and tables.
+Chapters own their Parts when printed; Acts with top-level Parts and unparted
+Acts keep their actual source hierarchy. An unnumbered proviso remains an
+ordered text block on the provision it qualifies rather than becoming an
+anonymous Provision.
+
+A deterministic source-claim ledger then aligns every emitted label, heading,
+and content block to normalized alphanumeric characters in the planned
+operative source. It separately checks structural markers and accounts
+explicitly for printed page numbers, recurring headers, and source-identified
+editorial cross-references or alteration notes. Missing source characters,
+missing or extra addressable markers, overlapping or duplicate claims,
+unsupported wording, invalid hierarchy, and section-order gaps block
+completion. The critic either requests fresh full replacements for affected
+units or replans the document; every repair is audited again. Exhausted repairs
+produce a failure artifact, never a plausible-looking success. Punctuation
+fidelity remains part of the required source review before promotion.
+
+Plans, units, rejected drafts, repairs, the current agent state, and audit
+reports are checkpointed atomically under `source-cache/structure-work/`.
+Running the same source, model, and prompt again revalidates and reuses completed
+checkpoints. Repairs use fresh model conversations so a rejected legal tree is
+not replayed into the next request context.
+
+During execution the CLI writes one JSON progress event per line to stderr for
+planning, unit starts and completions, audits, retries, repairs, and final
+materialization. Stdout remains reserved for the final result JSON, so scripts
+can capture it independently from live progress.
+
+The model, DeepSeek base URL, request timeout, worker concurrency, repair budget,
+and total run token budget can be configured with `OPENACTS_PRIMARY_MODEL`,
+`OPENACTS_DEEPSEEK_BASE_URL`, `OPENACTS_STRUCTURE_TIMEOUT_SECONDS`,
+`OPENACTS_STRUCTURE_CONCURRENCY`, `OPENACTS_STRUCTURE_MAX_REPAIR_ROUNDS`, and
+`OPENACTS_STRUCTURE_MAX_TOTAL_TOKENS`.
 
 The completed draft is written atomically under `source-cache/structures/` and
-records each pass, target, checkpoint status, model, usage, and latency. Its
-`provisions` contain the complete hierarchy and content blocks. Permanent
-corpus IDs are deliberately assigned later; this stage never edits `corpus/`.
+records the accepted plan, audit evidence and exclusions, each agent pass,
+checkpoint status, model usage, and latency. Its `provisions` contain the
+complete hierarchy and content blocks. Permanent corpus IDs are deliberately
+assigned later; this stage never edits `corpus/`.
 
 ## Build and review a corpus candidate
 
