@@ -10,7 +10,7 @@ import re
 import time
 import unicodedata
 import uuid
-from collections.abc import Iterable, Iterator
+from collections.abc import AsyncIterable, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
@@ -39,6 +39,7 @@ from openacts_pipeline.config import DEFAULT_PRIMARY_MODEL, StructureSettings
 from openacts_pipeline.structure_audit import (
     MARKER_LABEL,
     audit_materialized_provisions,
+    normalized_source_pages,
 )
 from openacts_pipeline.structure_prompts import (
     CRITIC_INSTRUCTIONS,
@@ -55,8 +56,10 @@ from openacts_pipeline.structure_runtime import (
 )
 from openacts_pipeline.structure_schema import (
     DraftListBlock,
+    DraftNode,
     DraftTableBlock,
     DraftTextBlock,
+    RepairPatch,
     RepairPlan,
     StructureDraft,
     StructurePlan,
@@ -145,6 +148,10 @@ ADDRESSABLE_MARKER = re.compile(
     r"(?:^|\n|[—–:]|-\s+)\s*"
     r"(?:\(\d+[a-z]?\)|\([a-z]\)|\([ivxlcdm]+\)|\d+[a-z]?\.)\s+",
     re.IGNORECASE,
+)
+PROMOTED_MARKER = re.compile(
+    r"^\s*(\((?:\d+[a-z]?|[a-z]+|[ivxlcdm]+)\)|\d+[a-z]?\.)\s+(.+)$",
+    re.IGNORECASE | re.DOTALL,
 )
 PLAN_SCOPE_MARKER = re.compile(
     r"(?m)^[ \t]*(?:\d+[a-z]?\.[ \t]*(?:[—–-][ \t]*)?)?"
@@ -325,6 +332,9 @@ async def _run_agent(
 ) -> ModelRun:
     rejected_output: BaseModel | None = None
     validation_error: PipelineError | None = None
+    patch_mode = output_type is RepairPatch
+    request_limit = 2 if patch_mode else 1
+    output_retries = 1 if patch_mode else 0
     instructions = (
         PLAN_INSTRUCTIONS
         if output_type is StructurePlan
@@ -334,11 +344,16 @@ async def _run_agent(
     )
     agent = Agent(
         model or _model(settings.primary_model, settings),
-        output_type=ToolOutput(output_type, strict=False, max_retries=0),
+        output_type=ToolOutput(
+            output_type,
+            strict=False,
+            max_retries=output_retries,
+        ),
         instructions=f"{instructions}\n\nREQUEST SCOPE\n{scope}",
-        # Repair is a fresh graph pass. In-conversation retries would replay a
-        # rejected legal tree into the next request and waste the context window.
-        retries=0,
+        # Full legal trees and plans remain single-request calls. A small patch
+        # gets one correction request so the model can repair a schema or JSON
+        # Pointer error without regenerating the document.
+        retries=output_retries,
         model_settings={
             "temperature": 0,
             "max_tokens": MAX_OUTPUT_TOKENS,
@@ -360,11 +375,17 @@ async def _run_agent(
 
     started = time.perf_counter()
     run_usage = RunUsage()
+
+    async def consume_stream(_: Any, events: AsyncIterable[Any]) -> None:
+        async for _ in events:
+            pass
+
     try:
         result = await agent.run(
             raw_text,
             usage=run_usage,
-            usage_limits=UsageLimits(request_limit=1),
+            usage_limits=UsageLimits(request_limit=request_limit),
+            event_stream_handler=consume_stream,
         )
         output = result.output
         usage = _usage(result)
@@ -379,7 +400,7 @@ async def _run_agent(
     except UsageLimitExceeded as exc:
         raise PipelineError(
             "model_usage_limit",
-            f"{settings.primary_model} exceeded the single-request agent limit "
+            f"{settings.primary_model} exceeded the {request_limit}-request agent limit "
             f"after {run_usage.requests} request(s), {run_usage.input_tokens} input "
             f"tokens, and {run_usage.output_tokens} output tokens: {exc}",
         ) from exc
@@ -510,6 +531,83 @@ def _node_reference(node: Any) -> str:
     return f"{node.node_type} {visible}" if visible else f"unnumbered {node.node_type}"
 
 
+def _recover_promoted_section_children(node: DraftNode) -> None:
+    def last_descendant(candidate: DraftNode) -> DraftNode:
+        while candidate.children:
+            candidate = candidate.children[-1]
+        return candidate
+
+    def marker_style(label: str) -> str:
+        compact = label.strip().strip("().").casefold()
+        if compact.isdigit():
+            return "decimal"
+        if len(compact) > 1 and all(character in "ivxlcdm" for character in compact):
+            return "roman"
+        return "alpha"
+
+    def marker_parent(candidate: DraftNode, label: str) -> tuple[DraftNode, str] | None:
+        style = marker_style(label)
+        matching = [
+            child
+            for child in candidate.children
+            if child.display_label is not None
+            and marker_style(child.display_label) == style
+        ]
+        if matching:
+            return candidate, matching[-1].node_type
+        for child in reversed(candidate.children):
+            if found := marker_parent(child, label):
+                return found
+        return None
+
+    if node.node_type == "section":
+        retained: list[DraftNode] = []
+        for child in node.children:
+            text_block = (
+                child.content_blocks[0]
+                if len(child.content_blocks) == 1
+                and isinstance(child.content_blocks[0], DraftTextBlock)
+                else None
+            )
+            promoted = (
+                child.node_type == "subsection"
+                and child.display_label is None
+                and child.heading is None
+                and not child.children
+                and text_block is not None
+                and retained
+            )
+            if not promoted:
+                retained.append(child)
+                continue
+            assert isinstance(text_block, DraftTextBlock)
+            if re.match(
+                r"\s*provided(?:\s+further)?\s+that\b",
+                text_block.text,
+                re.IGNORECASE,
+            ):
+                last_descendant(retained[-1]).content_blocks.extend(
+                    child.content_blocks
+                )
+                continue
+            marker = PROMOTED_MARKER.match(text_block.text)
+            owner = marker_parent(retained[-1], marker.group(1)) if marker else None
+            if marker is not None and owner is not None:
+                parent, node_type = owner
+                recovered = child.model_copy(deep=True)
+                recovered.node_type = node_type
+                recovered.display_label = marker.group(1)
+                recovered_text_block = recovered.content_blocks[0]
+                assert isinstance(recovered_text_block, DraftTextBlock)
+                recovered_text_block.text = marker.group(2).strip()
+                parent.children.append(recovered)
+                continue
+            retained.append(child)
+        node.children = retained
+    for child in node.children:
+        _recover_promoted_section_children(child)
+
+
 def _validate_draft(
     draft: StructureDraft,
     *,
@@ -518,6 +616,17 @@ def _validate_draft(
     pages: list[dict[str, Any]],
     target: StructureUnit | None = None,
 ) -> None:
+    normalized_pages = normalized_source_pages(pages)
+    raw_normalized_pages = {
+        page["pdf_page"]: _normalized(page["text"]) for page in pages
+    }
+    source_candidate_pages = [
+        pdf_page
+        for pdf_page in sorted(normalized_pages)
+        if target is None or target.start_pdf_page <= pdf_page <= target.end_pdf_page
+    ]
+    for root in draft.nodes:
+        _recover_promoted_section_children(root)
     if target is not None and target.kind == "schedule":
         # Printed Parts and numbered provisions retain their meaning inside a
         # Schedule; normalize provider vocabulary to the canonical context.
@@ -548,13 +657,20 @@ def _validate_draft(
             root.node_type != target.kind
             or _normalized(root.display_label or "")
             != _normalized(target.display_label or "")
-            or _normalized(root.heading or "") != _normalized(target.heading or "")
-            or root.pdf_page != target.start_pdf_page
+            or (
+                target.heading is not None
+                and _normalized(root.heading or "") != _normalized(target.heading)
+            )
         ):
             raise PipelineError(
                 "invalid_structure_output",
                 f"{target.unit_id} did not repeat its planned root exactly",
             )
+        # The validated plan owns unit metadata; model-added bracketed references
+        # are source annotations, not alternative headings.
+        root.display_label = target.display_label
+        root.heading = target.heading
+        root.pdf_page = target.start_pdf_page
 
     def validate_node(
         node: Any,
@@ -562,7 +678,52 @@ def _validate_draft(
         ancestor_texts: set[str],
         parent_path: tuple[str, ...],
         previous_sibling: Any | None,
+        json_path: str,
     ) -> None:
+        node_path = (*parent_path, _node_reference(node))
+        node.content_blocks = [
+            block
+            for block in node.content_blocks
+            if not (
+                isinstance(block, DraftTextBlock)
+                and (normalized_text := _normalized(block.text))
+                and normalized_text
+                in "".join(
+                    raw_normalized_pages.get(pdf_page, "")
+                    for pdf_page in block.pdf_pages
+                )
+                and normalized_text
+                not in "".join(
+                    normalized_pages.get(pdf_page, "") for pdf_page in block.pdf_pages
+                )
+            )
+        ]
+        for block in node.content_blocks:
+            if not isinstance(block, DraftTextBlock):
+                continue
+            normalized_text = _normalized(block.text)
+            claimed_source = "".join(
+                normalized_pages.get(pdf_page, "") for pdf_page in block.pdf_pages
+            )
+            if normalized_text in claimed_source:
+                continue
+            matches = [
+                pdf_page
+                for pdf_page in source_candidate_pages
+                if normalized_text in normalized_pages[pdf_page]
+            ]
+            if len(matches) > 1 and parent is not None and parent.pdf_page in matches:
+                matches = [parent.pdf_page]
+            if len(matches) != 1:
+                continue
+            [source_page] = matches
+            block.pdf_pages = [source_page]
+            if (
+                node.display_label
+                and _normalized(f"{node.display_label} {block.text}")
+                in normalized_pages[source_page]
+            ):
+                node.pdf_page = source_page
         child_types = {child.node_type for child in node.children}
         if node.node_type == "section" and {"subsection", "paragraph"}.issubset(
             child_types
@@ -612,7 +773,8 @@ def _validate_draft(
         ):
             raise PipelineError(
                 "incomplete_structure_output",
-                f"leaf {node.node_type} on PDF page {node.pdf_page} has no wording",
+                f"leaf {node.node_type} at {json_path} on PDF page "
+                f"{node.pdf_page} has no wording",
             )
         for field, value in (
             ("display label", node.display_label),
@@ -623,15 +785,17 @@ def _validate_draft(
             ):
                 raise PipelineError(
                     "source_text_mismatch",
-                    f"{node.node_type} {field} {value!r} is not recoverable "
+                    f"{node.node_type} {field} at {json_path} {value!r} is not recoverable "
                     f"from PDF page {node.pdf_page}",
                 )
         own_texts: set[str] = set()
-        for block in node.content_blocks:
+        for block_index, block in enumerate(node.content_blocks):
+            block_path = f"{json_path}/content_blocks/{block_index}"
             if _hides_addressable_marker(block):
                 raise PipelineError(
                     "incomplete_structure_output",
-                    "addressable marker was hidden inside content_blocks",
+                    f"addressable marker was hidden at {block_path}: "
+                    f"{block.model_dump_json()[:240]}",
                 )
             if isinstance(block, DraftTableBlock):
                 validate_table(block)
@@ -665,15 +829,16 @@ def _validate_draft(
                         "anonymous node and place this wording in the "
                         "content_blocks of the provision it qualifies.",
                     )
-                if not _is_subsequence(
-                    normalized_text, _normalized(_page_source(pages, pdf_pages))
-                ):
+                normalized_source = "".join(
+                    normalized_pages.get(pdf_page, "") for pdf_page in pdf_pages
+                )
+                if normalized_text not in normalized_source:
                     raise PipelineError(
                         "source_text_mismatch",
-                        f"{description} is not recoverable from PDF pages {pdf_pages}",
+                        f"{description} at {block_path} is not recoverable from "
+                        f"PDF pages {pdf_pages}: {text[:160]!r}",
                     )
         descendant_ancestors = ancestor_texts | own_texts
-        node_path = (*parent_path, _node_reference(node))
         for index, child in enumerate(node.children):
             validate_node(
                 child,
@@ -681,6 +846,7 @@ def _validate_draft(
                 descendant_ancestors,
                 node_path,
                 node.children[index - 1] if index else None,
+                f"{json_path}/children/{index}",
             )
 
     for index, root in enumerate(draft.nodes):
@@ -690,6 +856,7 @@ def _validate_draft(
             set(),
             (),
             draft.nodes[index - 1] if index else None,
+            f"/nodes/{index}",
         )
 
 
@@ -878,8 +1045,8 @@ def _plan_scope(previous_plan: StructurePlan | None, audit: Any | None) -> str:
 
 def _unit_scope(
     unit: StructureUnit,
-    issues: list[Any],
-    previous_draft: StructureDraft | None,
+    _issues: list[Any],
+    _previous_draft: StructureDraft | None,
 ) -> str:
     identity = json.dumps(
         unit.display_label or unit.heading or unit.kind, ensure_ascii=False
@@ -903,19 +1070,75 @@ def _unit_scope(
         "boundary page. Exclude running page furniture and bracketed editorial "
         "cross-references or alteration notes."
     )
-    if previous_draft is not None:
-        scope += (
-            "\n\nThis is a fresh full-replacement repair pass. Correct every audit "
-            "issue; do not return a patch and do not preserve an error merely "
-            "because it appeared in the prior draft.\nAUDIT ISSUES\n"
-            + json.dumps(
-                [issue.model_dump(mode="json") for issue in issues[:100]],
-                ensure_ascii=False,
-            )
-            + "\nPREVIOUS DRAFT\n"
-            + previous_draft.model_dump_json()
-        )
     return scope
+
+
+def _repair_scope(
+    unit: StructureUnit,
+    issues: list[Any],
+    current_draft: StructureDraft,
+) -> str:
+    path_index: list[str] = []
+
+    def index_nodes(nodes: list[DraftNode], parent_path: str) -> None:
+        for index, node in enumerate(nodes):
+            path = f"{parent_path}/{index}"
+            path_index.append(
+                json.dumps(
+                    {
+                        "path": path,
+                        "node_type": node.node_type,
+                        "display_label": node.display_label,
+                        "heading": node.heading,
+                        "pdf_page": node.pdf_page,
+                        "content_blocks": len(node.content_blocks),
+                        "children": len(node.children),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            index_nodes(node.children, f"{path}/children")
+
+    index_nodes(current_draft.nodes, "/nodes")
+    return (
+        "Return a surgical RepairPatch for the current legal-structure draft. "
+        f"The patch unit_id must be {json.dumps(unit.unit_id)}. Use only add, "
+        "remove, replace, and move operations with JSON Pointer paths under "
+        "/nodes. Preserve every path unrelated to the listed audit issues; never "
+        "replace or remove a whole top-level root. Use /- to append to an array.\n\n"
+        "Return at most 24 operations. Multiple audit records may describe one "
+        "underlying defect; repair that path once. Operations apply sequentially, "
+        "so account for array index changes after add, remove, or move.\n\n"
+        "For evidence issues, an unsupported_output page is the current invalid "
+        "claim, while a matching missing_source issue identifies the actual source "
+        "page. Relocate pdf_page and pdf_pages to the source page; do not duplicate "
+        "or rewrite wording that is already correct.\n\n"
+        "Copy wording exactly from the supplied PDF pages. To restore omitted "
+        "wording, add the smallest text block to the provision that owns it. To "
+        "fix page evidence, replace only pdf_page or pdf_pages. To fix an "
+        "unnumbered proviso, move its content block into the provision it qualifies "
+        "and remove the now-empty anonymous node. To fix a hidden addressable "
+        "marker, add the correctly typed child node with the marker as display_label "
+        "and the wording without that marker, then remove the malformed anonymous "
+        "node or block. When one such structural defect is reported, inspect the "
+        "candidate for the same defect elsewhere in the unit and repair every "
+        "instance in the same patch. Repair table headers inside the existing table "
+        "rows instead of flattening the table. For an unclaimed caption or column "
+        "heading, preserve the exact printed caption separately and split a combined "
+        "header line into its exact column cells. For an unclaimed heading before a "
+        "numbered list, add the smallest exact text block to the owning part or "
+        "schedule. The patched draft must resolve every listed issue without changing "
+        "unrelated wording.\n\n"
+        "AUDIT ISSUES\n"
+        + json.dumps(
+            [issue.model_dump(mode="json") for issue in issues[:100]],
+            ensure_ascii=False,
+        )
+        + "\nNODE PATH INDEX (copy paths exactly)\n"
+        + "\n".join(path_index)
+        + "\nCURRENT DRAFT\n"
+        + current_draft.model_dump_json()
+    )
 
 
 @contextmanager
@@ -1003,6 +1226,7 @@ def structure(
         runner=primary_runner,
         plan_scope=_plan_scope,
         unit_scope=_unit_scope,
+        repair_scope=_repair_scope,
         pages_text=pages_text,
         validate_plan=lambda plan: _validate_plan(plan, extraction["pages"]),
         validate_unit=lambda draft, unit: _validate_draft(
@@ -1103,7 +1327,7 @@ def structure(
         model_run = {
             "model": active_settings.primary_model,
             "output_mode": "tool",
-            "streaming": False,
+            "streaming": True,
             "latency_seconds": round(
                 sum(record["latency_seconds"] for record in pass_records), 3
             ),

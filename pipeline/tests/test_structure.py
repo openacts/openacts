@@ -12,6 +12,8 @@ from openacts_pipeline.common import PipelineError
 from openacts_pipeline.config import StructureSettings
 from openacts_pipeline.structure import ModelRun, structure
 from openacts_pipeline.structure_schema import (
+    DraftTextBlock,
+    RepairPatch,
     RepairPlan,
     StructureDraft,
     StructurePlan,
@@ -176,10 +178,117 @@ def test_structure_execute_plans_and_audits_bounded_units(tmp_path: Path) -> Non
         "unit_completed",
         "units_completed",
         "audit_completed",
+        "candidate_written",
         "graph_completed",
         "materialized_audit_completed",
         "structure_completed",
     ]
+
+
+def test_failed_audit_writes_an_inspectable_candidate(tmp_path: Path) -> None:
+    cache_root = tmp_path / "source-cache"
+    extraction = _write_extraction(
+        cache_root, "1. Example\nClaimed wording. Missing wording."
+    )
+    plan = StructurePlan.model_validate(
+        {
+            "legal_start_pdf_page": 1,
+            "legal_end_pdf_page": 1,
+            "units": [
+                {
+                    "unit_id": "body",
+                    "kind": "body",
+                    "start_pdf_page": 1,
+                    "end_pdf_page": 1,
+                }
+            ],
+        }
+    )
+    incomplete = StructureDraft.model_validate(
+        {
+            "nodes": [
+                {
+                    "node_type": "section",
+                    "display_label": "1.",
+                    "heading": "Example",
+                    "pdf_page": 1,
+                    "content_blocks": [
+                        {
+                            "kind": "text",
+                            "text": "Claimed wording.",
+                            "pdf_pages": [1],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    progress: list[dict[str, object]] = []
+
+    async def runner(
+        _: str,
+        __: StructureSettings,
+        ___: str,
+        output_type: type[object],
+        validate: object,
+    ) -> ModelRun:
+        output = plan if output_type is StructurePlan else incomplete
+        assert callable(validate)
+        validate(output)
+        return ModelRun(
+            output=output,
+            model="model",
+            output_mode="tool",
+            latency_seconds=0.1,
+            usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+        )
+
+    with pytest.raises(PipelineError, match="candidate.json"):
+        structure(
+            extraction,
+            execute=True,
+            cache_root=cache_root,
+            settings=StructureSettings(
+                "key",
+                "https://example.com",
+                "model",
+                30,
+                max_repair_rounds=0,
+            ),
+            primary_runner=runner,
+            progress=progress.append,
+        )
+
+    candidate_path = next((cache_root / "structure-work").glob("*/candidate.json"))
+    candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    assert candidate["status"] == "incomplete"
+    assert candidate["units"][0]["unit_id"] == "body"
+    assert candidate["units"][0]["draft"] == incomplete.model_dump(mode="json")
+    assert candidate["audit"]["passed"] is False
+    assert "candidate_written" in [event["event"] for event in progress]
+    assert not (cache_root / "structures").exists()
+
+    resumed_progress: list[dict[str, object]] = []
+
+    async def forbidden(*_: object) -> ModelRun:
+        raise AssertionError("candidate resume called the model")
+
+    with pytest.raises(PipelineError, match="candidate.json"):
+        structure(
+            extraction,
+            execute=True,
+            cache_root=cache_root,
+            settings=StructureSettings(
+                "key",
+                "https://example.com",
+                "model",
+                30,
+                max_repair_rounds=0,
+            ),
+            primary_runner=forbidden,
+            progress=resumed_progress.append,
+        )
+    assert "candidate_resumed" in [event["event"] for event in resumed_progress]
 
 
 def test_plan_cannot_exclude_pages_with_addressable_legal_markers() -> None:
@@ -206,6 +315,65 @@ def test_plan_cannot_exclude_pages_with_addressable_legal_markers() -> None:
                 {"pdf_page": 2, "text": "(1) Wrongly excluded wording."},
             ],
         )
+
+
+def test_unit_validation_uses_plan_authoritative_root_metadata() -> None:
+    unit = StructureUnit.model_validate(
+        {
+            "unit_id": "schedule-01",
+            "kind": "schedule",
+            "display_label": "FIRST SCHEDULE",
+            "heading": None,
+            "start_pdf_page": 2,
+            "end_pdf_page": 2,
+        }
+    )
+    draft = StructureDraft.model_validate(
+        {
+            "nodes": [
+                {
+                    "node_type": "schedule",
+                    "display_label": "FIRST SCHEDULE",
+                    "heading": "[Section 3]",
+                    "pdf_page": 1,
+                    "children": [
+                        {
+                            "node_type": "part",
+                            "display_label": "PART I",
+                            "pdf_page": 2,
+                            "content_blocks": [
+                                {
+                                    "kind": "text",
+                                    "text": "Exact wording.",
+                                    "pdf_pages": [2],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    pages = [
+        {"pdf_page": 1, "text": "Cover"},
+        {
+            "pdf_page": 2,
+            "text": "FIRST SCHEDULE\n[Section 3]\nPART I\nExact wording.",
+        },
+    ]
+
+    structure_module._validate_draft(
+        draft,
+        allowed_types=structure_module.UNIT_NODE_TYPES["schedule"],
+        page_count=2,
+        pages=pages,
+        target=unit,
+    )
+
+    assert draft.nodes[0].display_label == "FIRST SCHEDULE"
+    assert draft.nodes[0].heading is None
+    assert draft.nodes[0].pdf_page == 2
+    assert draft.nodes[0].children[0].node_type == "schedule_part"
 
 
 def test_plan_reports_range_and_source_identity_errors_together() -> None:
@@ -659,7 +827,7 @@ Provided that his membership resulted from a party division; or
         }
     )
 
-    draft_calls = 0
+    patch_calls = 0
 
     async def runner(
         _: str,
@@ -668,7 +836,7 @@ Provided that his membership resulted from a party division; or
         output_type: type[object],
         validate: object,
     ) -> ModelRun:
-        nonlocal draft_calls
+        nonlocal patch_calls
         assert callable(validate)
         if output_type is StructurePlan:
             validate(plan)
@@ -699,21 +867,49 @@ Provided that his membership resulted from a party division; or
                 latency_seconds=0.1,
                 usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
             )
-        draft_calls += 1
-        if draft_calls == 2:
-            raise PipelineError(
-                "model_transient",
-                "temporary provider failure during repair",
-                retryable=True,
+        if output_type is RepairPatch:
+            patch_calls += 1
+            if patch_calls == 1:
+                raise PipelineError(
+                    "model_transient",
+                    "temporary provider failure during repair",
+                    retryable=True,
+                )
+            output = RepairPatch.model_validate(
+                {
+                    "unit_id": "body",
+                    "operations": [
+                        {
+                            "op": "move",
+                            "from_path": (
+                                "/nodes/0/children/0/children/1/content_blocks/0"
+                            ),
+                            "path": ("/nodes/0/children/0/children/0/content_blocks/-"),
+                        },
+                        {
+                            "op": "remove",
+                            "path": "/nodes/0/children/0/children/1",
+                        },
+                    ],
+                }
             )
-        output = rejected if draft_calls == 1 else repaired
+            validate(output)
+            assert "CURRENT DRAFT" in scope
+            return ModelRun(
+                output=output,
+                model="model",
+                output_mode="tool",
+                latency_seconds=0.1,
+                usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+            )
+        assert output_type is StructureDraft
+        output = rejected
         try:
             validate(output)
         except PipelineError as exc:
             raise structure_module._RejectedModelOutput(
                 settings.primary_model, output, exc
             ) from exc
-        assert "PREVIOUS DRAFT" in scope
         return ModelRun(
             output=output,
             model="model",
@@ -742,8 +938,11 @@ Provided that his membership resulted from a party division; or
     assert result["status"] == "success"
     assert result["summary"]["repair_rounds"] == 1
     assert list(
-        (cache_root / "structure-work").glob("*/2101-body-repair-1-retry-1.json")
+        (cache_root / "structure-work").glob("*/3101-body-patch-repair-1-retry-1.json")
     )
+    [candidate_path] = list((cache_root / "structure-work").glob("*/candidate.json"))
+    candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    assert candidate["units"][0]["draft"] == repaired.model_dump(mode="json")
 
     async def forbidden(*_: object) -> ModelRun:
         raise AssertionError("repaired resume called the model")
@@ -793,13 +992,195 @@ def test_addressable_list_labels_cannot_bypass_structural_nodes() -> None:
         }
     )
 
-    with pytest.raises(PipelineError, match="addressable marker"):
+    with pytest.raises(PipelineError, match="addressable marker") as caught:
         structure_module._validate_draft(
             draft,
             allowed_types=structure_module.DOCUMENT_NODE_TYPES,
             page_count=1,
             pages=[{"pdf_page": 1, "text": "1. Example\n(a) First item."}],
         )
+    assert "/nodes/0/content_blocks/0" in str(caught.value)
+
+
+def test_content_validation_requires_a_contiguous_normalized_source_span() -> None:
+    draft = StructureDraft.model_validate(
+        {"nodes": [_node("section", "1.", text="alpha beta")]}
+    )
+
+    with pytest.raises(PipelineError, match="content text.*not recoverable") as caught:
+        structure_module._validate_draft(
+            draft,
+            allowed_types=structure_module.DOCUMENT_NODE_TYPES,
+            page_count=1,
+            pages=[
+                {
+                    "pdf_page": 1,
+                    "text": "1. alpha intervening wording beta",
+                }
+            ],
+        )
+    assert "/nodes/0/content_blocks/0" in str(caught.value)
+    assert "alpha beta" in str(caught.value)
+
+
+def test_content_validation_ignores_recurring_headers_across_pages() -> None:
+    draft = StructureDraft.model_validate(
+        {
+            "nodes": [
+                {
+                    "node_type": "section",
+                    "display_label": "1.",
+                    "pdf_page": 1,
+                    "content_blocks": [
+                        {
+                            "kind": "text",
+                            "text": "Alpha beta.",
+                            "pdf_pages": [1, 2],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    pages = [
+        {
+            "pdf_page": 1,
+            "text": "1\nThe Federal Republic Example Constitution\n1. Alpha",
+        },
+        {
+            "pdf_page": 2,
+            "text": "2\nThe Federal Republic Example Constitution\nbeta.",
+        },
+        {
+            "pdf_page": 3,
+            "text": "3\nThe Federal Republic Example Constitution\nUnused.",
+        },
+    ]
+
+    structure_module._validate_draft(
+        draft,
+        allowed_types=structure_module.DOCUMENT_NODE_TYPES,
+        page_count=3,
+        pages=pages,
+    )
+
+
+def test_validation_removes_content_already_classified_as_editorial() -> None:
+    draft = StructureDraft.model_validate(
+        {
+            "nodes": [
+                {
+                    "node_type": "document_title",
+                    "display_label": "Example Constitution",
+                    "pdf_page": 1,
+                    "content_blocks": [
+                        {
+                            "kind": "text",
+                            "text": "[Section 7]",
+                            "pdf_pages": [1],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    structure_module._validate_draft(
+        draft,
+        allowed_types=structure_module.DOCUMENT_NODE_TYPES,
+        page_count=1,
+        pages=[
+            {
+                "pdf_page": 1,
+                "text": "Example Constitution\n[Section 7]",
+            }
+        ],
+    )
+
+    assert draft.nodes[0].content_blocks == []
+
+
+def test_validation_recovers_promoted_proviso_and_following_paragraph() -> None:
+    draft = StructureDraft.model_validate(
+        {
+            "nodes": [
+                _node(
+                    "section",
+                    "68.",
+                    _node(
+                        "subsection",
+                        "(1)",
+                        _node("paragraph", "(g)", text="Party membership changes;"),
+                        text="A member vacates office if —",
+                    ),
+                    _node(
+                        "subsection",
+                        text="Provided that a party division caused the change; or",
+                    ),
+                    _node("subsection", text="(h) the member is recalled."),
+                )
+            ]
+        }
+    )
+    page_text = (
+        "68. A member vacates office if —\n"
+        "(1) A member vacates office if —\n"
+        "(g) Party membership changes;\n"
+        "Provided that a party division caused the change; or\n"
+        "(h) the member is recalled."
+    )
+
+    structure_module._validate_draft(
+        draft,
+        allowed_types=structure_module.DOCUMENT_NODE_TYPES,
+        page_count=1,
+        pages=[{"pdf_page": 1, "text": page_text}],
+    )
+
+    section = draft.nodes[0]
+    assert len(section.children) == 1
+    subsection = section.children[0]
+    assert [child.display_label for child in subsection.children] == ["(g)", "(h)"]
+    proviso = subsection.children[0].content_blocks[-1]
+    assert isinstance(proviso, DraftTextBlock)
+    assert proviso.text.startswith("Provided that")
+    following = subsection.children[1].content_blocks[0]
+    assert isinstance(following, DraftTextBlock)
+    assert following.text == "the member is recalled."
+
+
+def test_validation_relocates_uniquely_grounded_block_and_marker() -> None:
+    draft = StructureDraft.model_validate(
+        {
+            "nodes": [
+                _node(
+                    "section",
+                    "1.",
+                    _node("paragraph", "(b)", text="require evidence on oath;"),
+                )
+            ]
+        }
+    )
+    paragraph = draft.nodes[0].children[0]
+    draft.nodes[0].pdf_page = 2
+    paragraph.pdf_page = 3
+    block = paragraph.content_blocks[0]
+    assert isinstance(block, DraftTextBlock)
+    block.pdf_pages = [3]
+
+    structure_module._validate_draft(
+        draft,
+        allowed_types=structure_module.DOCUMENT_NODE_TYPES,
+        page_count=3,
+        pages=[
+            {"pdf_page": 1, "text": "(b) require evidence on oath;"},
+            {"pdf_page": 2, "text": "1. Example\n(b) require evidence on oath;"},
+            {"pdf_page": 3, "text": "(b) unrelated wording."},
+        ],
+    )
+
+    assert paragraph.pdf_page == 2
+    assert block.pdf_pages == [2]
 
 
 def test_section_sequence_tracks_lettered_insertions() -> None:
@@ -851,10 +1232,86 @@ def test_source_validation_stops_before_repeating_a_full_document(monkeypatch) -
     assert model.last_model_request_parameters.function_tools == []
 
 
+def test_repair_patch_gets_one_bounded_validation_retry(monkeypatch) -> None:
+    patch = RepairPatch.model_validate(
+        {
+            "unit_id": "chapter-01",
+            "operations": [
+                {
+                    "op": "replace",
+                    "path": "/nodes/0/pdf_page",
+                    "value": 5,
+                }
+            ],
+        }
+    )
+    model = TestModel(
+        custom_output_args=patch.model_dump(mode="json", exclude_none=True)
+    )
+    monkeypatch.setattr(structure_module, "_model", lambda *_: model)
+    attempts = 0
+
+    def validate(_: object) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PipelineError(
+                "invalid_repair_patch",
+                "list index 12 does not exist",
+            )
+
+    result = asyncio.run(
+        structure_module._run_agent(
+            "--- PDF PAGE 5 ---\nCHAPTER I",
+            StructureSettings("key", "https://example.com", "model", 30),
+            "Repair chapter-01.",
+            RepairPatch,
+            validate,
+        )
+    )
+
+    assert result.output == patch
+    assert attempts == 2
+    assert result.usage["requests"] == 2
+
+
+def test_repair_scope_indexes_exact_candidate_paths() -> None:
+    draft = StructureDraft.model_validate(
+        {
+            "nodes": [
+                _node(
+                    "chapter",
+                    "CHAPTER I",
+                    _node("section", "1.", text="Binding wording."),
+                )
+            ]
+        }
+    )
+    unit = StructureUnit.model_validate(
+        {
+            "unit_id": "chapter-01",
+            "kind": "chapter",
+            "display_label": "CHAPTER I",
+            "start_pdf_page": 1,
+            "end_pdf_page": 1,
+        }
+    )
+
+    scope = structure_module._repair_scope(unit, [], draft)
+
+    assert "NODE PATH INDEX (copy paths exactly)" in scope
+    assert "hidden addressable marker" in scope
+    assert (
+        '"path": "/nodes/0/children/0", "node_type": "section", '
+        '"display_label": "1."' in scope
+    )
+
+
 def test_agent_usage_limit_becomes_a_pipeline_error(monkeypatch) -> None:
     model = TestModel()
 
     async def exceed_limit(*_: object, **kwargs: object) -> object:
+        assert callable(kwargs["event_stream_handler"])
         usage = kwargs["usage"]
         usage.requests = 1
         usage.input_tokens = 123

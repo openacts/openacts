@@ -294,6 +294,18 @@ def _build_ledgers(
     return ledgers
 
 
+def normalized_source_pages(pages: list[dict[str, Any]]) -> dict[int, str]:
+    """Return audit-normalized page text with document furniture excluded."""
+    if not pages:
+        return {}
+    ledgers = _build_ledgers(
+        pages,
+        min(page["pdf_page"] for page in pages),
+        max(page["pdf_page"] for page in pages),
+    )
+    return {pdf_page: ledger.normalized for pdf_page, ledger in ledgers.items()}
+
+
 def _draft_block_claims(
     block: DraftContentBlock, unit_id: str | None
 ) -> Iterator[_Claim]:

@@ -16,7 +16,7 @@ def test_structure_settings_are_typed_and_fail_loudly() -> None:
     assert settings.primary_model == DEFAULT_PRIMARY_MODEL
     assert settings.request_timeout_seconds == 300
     assert settings.concurrency == 4
-    assert settings.max_repair_rounds == 2
+    assert settings.max_repair_rounds == 3
     assert settings.max_total_tokens == 2_000_000
 
     with pytest.raises(PipelineError) as missing:

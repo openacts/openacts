@@ -18,7 +18,13 @@ from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepCon
 from openacts_pipeline.common import PipelineError, write_json_result
 from openacts_pipeline.config import StructureSettings
 from openacts_pipeline.structure_audit import AuditIssue, AuditReport, audit_drafts
+from openacts_pipeline.structure_repair import (
+    apply_repair_patch,
+    repair_improves,
+    repair_score,
+)
 from openacts_pipeline.structure_schema import (
+    RepairPatch,
     RepairPlan,
     StructureDraft,
     StructurePlan,
@@ -135,6 +141,42 @@ async def run_checkpointed(
     )
     scope_hash = hashlib.sha256(scope.encode()).hexdigest()
     input_hash = hashlib.sha256(raw_text.encode()).hexdigest()
+
+    async def run_scoped_checkpoint() -> tuple[ModelRun, bool]:
+        resume_material = "|".join(
+            (
+                source_id,
+                input_hash,
+                scope_hash,
+                settings.primary_model,
+                str(structure_version),
+                str(prompt_version),
+                output_type.__name__,
+            )
+        )
+        digest = hashlib.sha256(resume_material.encode()).hexdigest()[:12]
+        suffix = f"-scope-{digest}"
+        if pass_name.endswith(suffix):
+            raise PipelineError(
+                "invalid_structure_checkpoint",
+                f"scoped {pass_name} checkpoint metadata is inconsistent",
+            )
+        return await run_checkpointed(
+            cache_root=cache_root,
+            work_key=work_key,
+            pass_index=pass_index,
+            pass_name=f"{pass_name}{suffix}",
+            source_id=source_id,
+            raw_text=raw_text,
+            settings=settings,
+            scope=scope,
+            output_type=output_type,
+            runner=runner,
+            validate=validate,
+            structure_version=structure_version,
+            prompt_version=prompt_version,
+        )
+
     if path.exists():
         try:
             checkpoint = json.loads(path.read_text(encoding="utf-8"))
@@ -146,11 +188,13 @@ async def run_checkpointed(
                 or checkpoint["configured_model"] != settings.primary_model
                 or checkpoint["pass_index"] != pass_index
                 or checkpoint["pass_name"] != pass_name
-                or checkpoint["scope_sha256"] != scope_hash
-                or checkpoint["input_sha256"] != input_hash
                 or checkpoint["output_type"] != output_type.__name__
             ):
-                raise ValueError("checkpoint metadata does not match this pass")
+                raise ValueError("checkpoint identity does not match this pass")
+            stale_scope = (
+                checkpoint["scope_sha256"] != scope_hash
+                or checkpoint["input_sha256"] != input_hash
+            )
             output = output_type.model_validate(checkpoint["output"])
             run_data = checkpoint["model_run"]
             run = ModelRun(
@@ -164,6 +208,21 @@ async def run_checkpointed(
             raise PipelineError(
                 "invalid_structure_checkpoint", f"cannot resume {pass_name}: {exc}"
             ) from exc
+        if stale_scope:
+            try:
+                validate(output)
+            except PipelineError:
+                return await run_scoped_checkpoint()
+            return (
+                ModelRun(
+                    output=output,
+                    model=run.model,
+                    output_mode="revalidated_stale_checkpoint",
+                    latency_seconds=run.latency_seconds,
+                    usage=run.usage,
+                ),
+                True,
+            )
         try:
             validate(output)
         except PipelineError as exc:
@@ -188,28 +247,52 @@ async def run_checkpointed(
                 or failure["configured_model"] != settings.primary_model
                 or failure["pass_index"] != pass_index
                 or failure["pass_name"] != pass_name
-                or failure["scope_sha256"] != scope_hash
-                or failure["input_sha256"] != input_hash
                 or failure["output_type"] != output_type.__name__
             ):
-                raise ValueError("failure checkpoint metadata does not match this pass")
-            output = output_type.model_validate(failure["output"])
-            error = failure["validation_error"]
-            validation_error = PipelineError(
-                error["code"],
-                error["message"],
-                retryable=bool(error.get("retryable", False)),
+                raise ValueError("failure checkpoint identity does not match this pass")
+            stale_scope = (
+                failure["scope_sha256"] != scope_hash
+                or failure["input_sha256"] != input_hash
             )
+            output = output_type.model_validate(failure["output"])
         except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise PipelineError(
                 "invalid_structure_checkpoint",
                 f"cannot resume failed {pass_name}: {exc}",
             ) from exc
-        raise RejectedCheckpoint(
-            output=output,
-            validation_error=validation_error,
-            relative_path=failure_relative_path,
-            checkpoint_reused=True,
+        if stale_scope:
+            try:
+                validate(output)
+            except PipelineError:
+                return await run_scoped_checkpoint()
+            return (
+                ModelRun(
+                    output=output,
+                    model=settings.primary_model,
+                    output_mode="revalidated_stale_checkpoint",
+                    latency_seconds=0.0,
+                    usage={"requests": 0, "input_tokens": 0, "output_tokens": 0},
+                ),
+                True,
+            )
+        try:
+            validate(output)
+        except PipelineError as exc:
+            raise RejectedCheckpoint(
+                output=output,
+                validation_error=exc,
+                relative_path=failure_relative_path,
+                checkpoint_reused=True,
+            ) from exc
+        return (
+            ModelRun(
+                output=output,
+                model=settings.primary_model,
+                output_mode="revalidated_failure_checkpoint",
+                latency_seconds=0.0,
+                usage={"requests": 0, "input_tokens": 0, "output_tokens": 0},
+            ),
+            True,
         )
 
     try:
@@ -294,6 +377,7 @@ PlanScopeBuilder = Callable[[StructurePlan | None, AuditReport | None], str]
 UnitScopeBuilder = Callable[
     [StructureUnit, list[AuditIssue], StructureDraft | None], str
 ]
+RepairScopeBuilder = Callable[[StructureUnit, list[AuditIssue], StructureDraft], str]
 PagesTextBuilder = Callable[[int, int], str]
 
 
@@ -308,6 +392,7 @@ class StructureDeps:
     runner: ModelRunner
     plan_scope: PlanScopeBuilder
     unit_scope: UnitScopeBuilder
+    repair_scope: RepairScopeBuilder
     pages_text: PagesTextBuilder
     validate_plan: PlanValidator
     validate_unit: UnitValidator
@@ -406,6 +491,144 @@ def _write_state(state: StructureState, deps: StructureDeps, phase: str) -> None
     )
 
 
+def _write_candidate(state: StructureState, deps: StructureDeps) -> Path:
+    plan = state.plan
+    report = state.audit
+    if plan is None or report is None:
+        raise PipelineError(
+            "structure_state_invalid", "candidate requires a plan and audit"
+        )
+    units = []
+    for unit in plan.units:
+        result = state.unit_results.get(unit.unit_id)
+        if result is None:
+            raise PipelineError(
+                "structure_state_invalid",
+                f"candidate is missing unit {unit.unit_id}",
+            )
+        units.append(
+            {
+                "unit_id": unit.unit_id,
+                "unit": unit.model_dump(mode="json"),
+                "selected_pass": result.pass_name,
+                "checkpoint_reused": result.checkpoint_reused,
+                "validation_issue": (
+                    result.validation_issue.model_dump(mode="json")
+                    if result.validation_issue is not None
+                    else None
+                ),
+                "draft": result.draft.model_dump(mode="json"),
+            }
+        )
+    payload = {
+        "stage": "structure_candidate",
+        "status": "ready" if report.passed else "incomplete",
+        "structure_version": deps.structure_version,
+        "prompt_version": deps.prompt_version,
+        "source_id": deps.source_id,
+        "configured_model": deps.settings.primary_model,
+        "plan_revision": state.plan_revision,
+        "repair_round": state.repair_round,
+        "plan": plan.model_dump(mode="json"),
+        "audit": report.model_dump(mode="json"),
+        "units": units,
+        "passes": state.pass_records,
+    }
+    return write_json_result(
+        deps.cache_root,
+        payload,
+        Path("structure-work") / deps.work_key / "candidate.json",
+    )
+
+
+def _load_candidate_state(deps: StructureDeps) -> StructureState:
+    relative_path = Path("structure-work") / deps.work_key / "candidate.json"
+    path = deps.cache_root / relative_path
+    if not path.exists():
+        return StructureState()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            payload["stage"] != "structure_candidate"
+            or payload["status"] not in {"incomplete", "ready"}
+            or payload["structure_version"] != deps.structure_version
+            or payload["prompt_version"] != deps.prompt_version
+            or payload["source_id"] != deps.source_id
+            or payload["configured_model"] != deps.settings.primary_model
+            or payload["result_path"] != relative_path.as_posix()
+        ):
+            raise ValueError("candidate metadata does not match this workflow")
+        plan = StructurePlan.model_validate(payload["plan"])
+        deps.validate_plan(plan)
+        raw_units = payload["units"]
+        if not isinstance(raw_units, list):
+            raise TypeError("candidate units must be a list")
+        units_by_id = {item["unit_id"]: item for item in raw_units}
+        if set(units_by_id) != {unit.unit_id for unit in plan.units}:
+            raise ValueError("candidate units do not match its plan")
+        unit_results: dict[str, UnitResult] = {}
+        for unit in plan.units:
+            item = units_by_id[unit.unit_id]
+            stored_unit = StructureUnit.model_validate(item["unit"])
+            if stored_unit != unit:
+                raise ValueError(f"candidate unit {unit.unit_id} metadata changed")
+            draft = StructureDraft.model_validate(item["draft"])
+            try:
+                deps.validate_unit(draft, unit)
+            except PipelineError as exc:
+                validation_issue = _issue_for_validation(unit, exc)
+            else:
+                validation_issue = None
+            unit_results[unit.unit_id] = UnitResult(
+                unit=unit,
+                draft=draft,
+                run=ModelRun(
+                    output=draft,
+                    model=deps.settings.primary_model,
+                    output_mode="candidate_resume",
+                    latency_seconds=0.0,
+                    usage={"requests": 0, "input_tokens": 0, "output_tokens": 0},
+                ),
+                pass_name=item["selected_pass"],
+                checkpoint_reused=True,
+                validation_issue=validation_issue,
+            )
+        stored_pass_records = payload["passes"]
+        if not isinstance(stored_pass_records, list) or any(
+            not isinstance(record, dict) or not isinstance(record.get("usage"), dict)
+            for record in stored_pass_records
+        ):
+            raise TypeError("candidate passes are invalid")
+        pass_records = [
+            {**record, "checkpoint_reused": True} for record in stored_pass_records
+        ]
+        state = StructureState(
+            plan=plan,
+            unit_results=unit_results,
+            pass_records=pass_records,
+            repair_round=int(payload["repair_round"]),
+            plan_revision=int(payload.get("plan_revision", 0)),
+        )
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
+        raise PipelineError(
+            "invalid_structure_candidate", f"cannot resume candidate: {exc}"
+        ) from exc
+    _emit(
+        deps,
+        "candidate_resumed",
+        result_path=relative_path.as_posix(),
+        units=len(state.unit_results),
+        repair_round=state.repair_round,
+    )
+    return state
+
+
 def _issue_for_validation(unit: StructureUnit, error: PipelineError) -> AuditIssue:
     return AuditIssue(
         code="unsupported_output",
@@ -439,6 +662,28 @@ def _assign_issues(report: AuditReport, plan: StructurePlan) -> AuditReport:
         for issue in report.issues
     ]
     return report.model_copy(update={"issues": issues, "passed": not issues})
+
+
+def _audit_results(
+    plan: StructurePlan,
+    unit_results: dict[str, UnitResult],
+    deps: StructureDeps,
+) -> AuditReport:
+    ordered = [unit_results[unit.unit_id] for unit in plan.units]
+    report = audit_drafts(
+        [(result.unit.unit_id, result.draft) for result in ordered],
+        pages=deps.pages,
+        legal_start_pdf_page=plan.legal_start_pdf_page,
+        legal_end_pdf_page=plan.legal_end_pdf_page,
+    )
+    issues = [
+        result.validation_issue
+        for result in ordered
+        if result.validation_issue is not None
+    ] + report.issues
+    return _assign_issues(
+        report.model_copy(update={"issues": issues, "passed": not issues}), plan
+    )
 
 
 def _issue_summary(report: AuditReport) -> str:
@@ -726,20 +971,7 @@ class AuditNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
         plan = ctx.state.plan
         if plan is None:
             raise PipelineError("structure_state_invalid", "audit has no plan")
-        ordered = [ctx.state.unit_results[unit.unit_id] for unit in plan.units]
-        report = audit_drafts(
-            [(result.unit.unit_id, result.draft) for result in ordered],
-            pages=ctx.deps.pages,
-            legal_start_pdf_page=plan.legal_start_pdf_page,
-            legal_end_pdf_page=plan.legal_end_pdf_page,
-        )
-        issues = [
-            result.validation_issue
-            for result in ordered
-            if result.validation_issue is not None
-        ] + report.issues
-        report = report.model_copy(update={"issues": issues, "passed": not issues})
-        ctx.state.audit = _assign_issues(report, plan)
+        ctx.state.audit = _audit_results(plan, ctx.state.unit_results, ctx.deps)
         audit_payload = {
             "stage": "structure_audit",
             "status": "success" if ctx.state.audit.passed else "failure",
@@ -754,6 +986,8 @@ class AuditNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
             Path("structure-work") / ctx.deps.work_key / "audit.json",
         )
         _write_state(ctx.state, ctx.deps, "audited")
+        candidate_path = _write_candidate(ctx.state, ctx.deps)
+        candidate_relative_path = candidate_path.relative_to(ctx.deps.cache_root)
         _emit(
             ctx.deps,
             "audit_completed",
@@ -765,12 +999,21 @@ class AuditNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
             source_markers=ctx.state.audit.source_markers,
             repair_round=ctx.state.repair_round,
         )
+        _emit(
+            ctx.deps,
+            "candidate_written",
+            status="ready" if ctx.state.audit.passed else "incomplete",
+            result_path=candidate_relative_path.as_posix(),
+            issues=len(ctx.state.audit.issues),
+            repair_round=ctx.state.repair_round,
+        )
         if ctx.state.audit.passed:
             return FinalizeNode()
         if ctx.state.repair_round >= ctx.deps.settings.max_repair_rounds:
             raise PipelineError(
                 "structure_audit_failed",
                 f"repair budget exhausted with {len(ctx.state.audit.issues)} issues; "
+                f"candidate: {candidate_relative_path.as_posix()}; "
                 f"audit: structure-work/{ctx.deps.work_key}/audit.json",
             )
         return CriticNode()
@@ -946,32 +1189,43 @@ class RepairNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
             concurrency=ctx.deps.settings.concurrency,
         )
 
-        async def repair_unit(index: int, unit: StructureUnit) -> UnitResult:
+        async def repair_unit(index: int, unit: StructureUnit) -> UnitResult | None:
             current = ctx.state.unit_results[unit.unit_id]
             issues = [issue for issue in report.issues if issue.unit_id == unit.unit_id]
-            scope = ctx.deps.unit_scope(unit, issues, current.draft)
+            scope = ctx.deps.repair_scope(unit, issues, current.draft)
             raw_text = ctx.deps.pages_text(unit.start_pdf_page, unit.end_pdf_page)
 
-            def validate(output: BaseModel) -> None:
-                if not isinstance(output, StructureDraft):
+            def patched_draft(output: BaseModel) -> StructureDraft:
+                if not isinstance(output, RepairPatch):
                     raise PipelineError(
-                        "model_invalid_output", "repair returned the wrong schema"
+                        "model_invalid_output", "repair returned the wrong patch schema"
                     )
-                ctx.deps.validate_unit(output, unit)
+                if output.unit_id != unit.unit_id:
+                    raise PipelineError(
+                        "invalid_repair_patch",
+                        f"repair patch targets {output.unit_id}, not {unit.unit_id}",
+                    )
+                candidate = apply_repair_patch(current.draft, output)
+                ctx.deps.validate_unit(candidate, unit)
+                return candidate
+
+            def validate(output: BaseModel) -> None:
+                patched_draft(output)
 
             async with semaphore:
                 _emit(
                     ctx.deps,
-                    "repair_started",
+                    "repair_patch_started",
                     repair_round=round_number,
                     unit_id=unit.unit_id,
                     issues=len(issues),
                 )
-                repair_pass_name = f"{unit.unit_id}-repair-{round_number}"
+                repair_pass_name = f"{unit.unit_id}-patch-repair-{round_number}"
+                pass_index = 3000 + round_number * 100 + index
                 for request_attempt in _checkpoint_attempts(
                     cache_root=ctx.deps.cache_root,
                     work_key=ctx.deps.work_key,
-                    pass_index=2000 + round_number * 100 + index,
+                    pass_index=pass_index,
                     pass_name=repair_pass_name,
                 ):
                     suffix = "" if request_attempt == 0 else "-retry-1"
@@ -980,13 +1234,13 @@ class RepairNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
                         run, reused = await run_checkpointed(
                             cache_root=ctx.deps.cache_root,
                             work_key=ctx.deps.work_key,
-                            pass_index=2000 + round_number * 100 + index,
+                            pass_index=pass_index,
                             pass_name=pass_name,
                             source_id=ctx.deps.source_id,
                             raw_text=raw_text,
                             settings=ctx.deps.settings,
                             scope=scope,
-                            output_type=StructureDraft,
+                            output_type=RepairPatch,
                             runner=ctx.deps.runner,
                             validate=validate,
                             structure_version=ctx.deps.structure_version,
@@ -994,16 +1248,14 @@ class RepairNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
                         )
                         result = UnitResult(
                             unit=unit,
-                            draft=StructureDraft.model_validate(
-                                run.output.model_dump()
-                            ),
+                            draft=patched_draft(run.output),
                             run=run,
                             pass_name=pass_name,
                             checkpoint_reused=reused,
                         )
                         _emit(
                             ctx.deps,
-                            "repair_completed",
+                            "repair_patch_validated",
                             repair_round=round_number,
                             unit_id=unit.unit_id,
                             pass_name=pass_name,
@@ -1013,46 +1265,24 @@ class RepairNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
                         )
                         return result
                     except RejectedCheckpoint as exc:
-                        rejected = StructureDraft.model_validate(
-                            exc.output.model_dump()
-                        )
-                        result = UnitResult(
-                            unit=unit,
-                            draft=rejected,
-                            run=ModelRun(
-                                output=rejected,
-                                model=ctx.deps.settings.primary_model,
-                                output_mode="tool",
-                                latency_seconds=0,
-                                usage={
-                                    "requests": 1,
-                                    "input_tokens": 0,
-                                    "output_tokens": 0,
-                                },
-                            ),
-                            pass_name=pass_name,
-                            checkpoint_reused=exc.checkpoint_reused,
-                            validation_issue=_issue_for_validation(
-                                unit, exc.validation_error
-                            ),
-                        )
                         _emit(
                             ctx.deps,
-                            "repair_rejected",
+                            "repair_patch_discarded",
                             repair_round=round_number,
                             unit_id=unit.unit_id,
                             pass_name=pass_name,
                             checkpoint_reused=exc.checkpoint_reused,
+                            reason="validation_failed",
                             error_code=exc.validation_error.code,
                             rejected_checkpoint=exc.relative_path.as_posix(),
                         )
-                        return result
+                        return None
                     except PipelineError as exc:
                         if not exc.retryable or request_attempt:
                             raise
                         _emit(
                             ctx.deps,
-                            "repair_retrying",
+                            "repair_patch_retrying",
                             repair_round=round_number,
                             unit_id=unit.unit_id,
                             pass_name=pass_name,
@@ -1061,12 +1291,19 @@ class RepairNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
                         await asyncio.sleep(random.uniform(0.25, 1.0))
                 raise AssertionError("repair request loop did not terminate")
 
+        unit_indexes = {
+            unit.unit_id: index for index, unit in enumerate(plan.units, start=1)
+        }
         targets = [unit for unit in plan.units if unit.unit_id in decisions]
         replacements = await asyncio.gather(
-            *(repair_unit(index, unit) for index, unit in enumerate(targets, start=1))
+            *(repair_unit(unit_indexes[unit.unit_id], unit) for unit in targets)
         )
+        working_report = report
+        accepted = 0
+        discarded = sum(result is None for result in replacements)
         for result in replacements:
-            ctx.state.unit_results[result.unit.unit_id] = result
+            if result is None:
+                continue
             ctx.state.pass_records.append(
                 _pass_record(
                     result.pass_name,
@@ -1075,13 +1312,45 @@ class RepairNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
                     unit=result.unit,
                 )
             )
+            trial_results = dict(ctx.state.unit_results)
+            trial_results[result.unit.unit_id] = result
+            trial_report = _audit_results(plan, trial_results, ctx.deps)
+            if repair_improves(working_report, trial_report, result.unit.unit_id):
+                before_score = repair_score(working_report)
+                ctx.state.unit_results[result.unit.unit_id] = result
+                working_report = trial_report
+                accepted += 1
+                _emit(
+                    ctx.deps,
+                    "repair_patch_accepted",
+                    repair_round=round_number,
+                    unit_id=result.unit.unit_id,
+                    pass_name=result.pass_name,
+                    before_score=before_score,
+                    after_score=repair_score(trial_report),
+                )
+            else:
+                discarded += 1
+                _emit(
+                    ctx.deps,
+                    "repair_patch_discarded",
+                    repair_round=round_number,
+                    unit_id=result.unit.unit_id,
+                    pass_name=result.pass_name,
+                    reason="audit_not_improved",
+                    before_score=repair_score(working_report),
+                    after_score=repair_score(trial_report),
+                )
         _enforce_token_budget(ctx.state, ctx.deps)
+        ctx.state.audit = working_report
         _write_state(ctx.state, ctx.deps, "repaired")
         _emit(
             ctx.deps,
             "repairs_completed",
             repair_round=round_number,
-            units=len(replacements),
+            units=len(targets),
+            accepted=accepted,
+            discarded=discarded,
         )
         return AuditNode()
 
@@ -1116,6 +1385,16 @@ class FinalizeNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
         )
 
 
+@dataclass
+class ResumeNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
+    async def run(
+        self, ctx: GraphRunContext[StructureState, StructureDeps]
+    ) -> PlanNode | AuditNode:
+        if ctx.state.plan is not None and ctx.state.unit_results:
+            return AuditNode()
+        return PlanNode()
+
+
 def build_structure_graph():
     builder = GraphBuilder(
         state_type=StructureState,
@@ -1126,8 +1405,8 @@ def build_structure_graph():
     @builder.step
     async def start(
         ctx: StepContext[StructureState, StructureDeps, None],
-    ) -> PlanNode:
-        return PlanNode()
+    ) -> ResumeNode:
+        return ResumeNode()
 
     builder.add(
         builder.node(PlanNode),
@@ -1136,6 +1415,7 @@ def build_structure_graph():
         builder.node(CriticNode),
         builder.node(RepairNode),
         builder.node(FinalizeNode),
+        builder.node(ResumeNode),
         builder.edge_from(builder.start_node).to(start),
     )
     return builder.build()
@@ -1145,4 +1425,4 @@ STRUCTURE_GRAPH = build_structure_graph()
 
 
 async def run_structure_graph(deps: StructureDeps) -> WorkflowResult:
-    return await STRUCTURE_GRAPH.run(state=StructureState(), deps=deps)
+    return await STRUCTURE_GRAPH.run(state=_load_candidate_state(deps), deps=deps)

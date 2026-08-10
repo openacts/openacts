@@ -327,6 +327,42 @@ class RepairPlan(BaseModel):
     decisions: list[RepairDecision] = Field(min_length=1)
 
 
+RepairOperationName = Literal["add", "remove", "replace", "move"]
+
+
+class RepairOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    op: RepairOperationName
+    path: str = Field(pattern=r"^/nodes/")
+    from_path: str | None = Field(default=None, pattern=r"^/nodes/")
+    value: Any = None
+
+    @model_validator(mode="after")
+    def validate_operation(self) -> RepairOperation:
+        has_value = "value" in self.model_fields_set
+        if self.op in {"add", "replace"} and not has_value:
+            raise ValueError(f"value is required for {self.op}")
+        if self.op in {"remove", "move"} and has_value and self.value is not None:
+            raise ValueError(f"value is not allowed for {self.op}")
+        if self.op == "move" and self.from_path is None:
+            raise ValueError("from_path is required for move")
+        if self.op != "move" and self.from_path is not None:
+            raise ValueError(f"from_path is not allowed for {self.op}")
+        if re.fullmatch(r"/nodes/\d+", self.path) or (
+            self.from_path is not None and re.fullmatch(r"/nodes/\d+", self.from_path)
+        ):
+            raise ValueError("repair operations cannot replace or remove a whole root")
+        return self
+
+
+class RepairPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    unit_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    operations: list[RepairOperation] = Field(min_length=1, max_length=24)
+
+
 def iter_block_texts(
     block: DraftContentBlock,
 ) -> Iterable[tuple[str, list[int], str]]:

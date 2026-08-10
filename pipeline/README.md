@@ -140,16 +140,20 @@ explicitly for printed page numbers, recurring headers, and source-identified
 editorial cross-references or alteration notes. Missing source characters,
 missing or extra addressable markers, overlapping or duplicate claims,
 unsupported wording, invalid hierarchy, and section-order gaps block
-completion. The critic either requests fresh full replacements for affected
-units or replans the document; every repair is audited again. Exhausted repairs
-produce a failure artifact, never a plausible-looking success. Punctuation
-fidelity remains part of the required source review before promotion.
+completion. The critic either requests bounded JSON-Patch repairs for affected
+units or replans the document. Patches apply to copies, pass the ordinary unit
+validator, and replace the retained draft only when the complete audit improves
+without adding issues elsewhere. Exhausted repairs never produce a
+plausible-looking success. Punctuation fidelity remains part of the required
+source review before promotion.
 
 Plans, units, rejected drafts, repairs, the current agent state, and audit
 reports are checkpointed atomically under `source-cache/structure-work/`.
 Running the same source, model, and prompt again revalidates and reuses completed
 checkpoints. Repairs use fresh model conversations so a rejected legal tree is
-not replayed into the next request context.
+not replayed into the next request context. Every audit also writes the selected
+unit drafts and report to `candidate.json`; failed candidates remain inspectable
+there but cannot enter `source-cache/structures/`.
 
 During execution the CLI writes one JSON progress event per line to stderr for
 planning, unit starts and completions, audits, retries, repairs, and final

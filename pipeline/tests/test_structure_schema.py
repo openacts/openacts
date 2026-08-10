@@ -1,11 +1,15 @@
 import json
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from openacts_pipeline.structure_schema import (
     CANONICAL_NODE_TYPES,
     DraftNode,
     DraftTableBlock,
     DraftTextBlock,
+    RepairPatch,
     StructureDraft,
     materialize_provisions,
 )
@@ -108,3 +112,56 @@ def test_draft_node_recovers_table_block_misplaced_in_children() -> None:
             layout_status="faithfully_reconstructed",
         )
     ]
+
+
+def test_repair_patch_is_bounded_to_surgical_draft_operations() -> None:
+    patch = RepairPatch.model_validate(
+        {
+            "unit_id": "chapter-05",
+            "operations": [
+                {
+                    "op": "replace",
+                    "path": "/nodes/0/children/1/pdf_page",
+                    "value": 98,
+                },
+                {
+                    "op": "move",
+                    "from_path": "/nodes/0/children/2/content_blocks/0",
+                    "path": "/nodes/0/children/1/content_blocks/-",
+                },
+            ],
+        }
+    )
+
+    assert len(patch.operations) == 2
+    with pytest.raises(ValidationError, match="value is required"):
+        RepairPatch.model_validate(
+            {
+                "unit_id": "chapter-05",
+                "operations": [{"op": "replace", "path": "/nodes/0/heading"}],
+            }
+        )
+    with pytest.raises(ValidationError, match="whole root"):
+        RepairPatch.model_validate(
+            {
+                "unit_id": "chapter-05",
+                "operations": [
+                    {"op": "remove", "path": "/nodes/0"},
+                ],
+            }
+        )
+
+    with pytest.raises(ValidationError, match="at most 24 items"):
+        RepairPatch.model_validate(
+            {
+                "unit_id": "chapter-01",
+                "operations": [
+                    {
+                        "op": "replace",
+                        "path": "/nodes/0/pdf_page",
+                        "value": index + 1,
+                    }
+                    for index in range(25)
+                ],
+            }
+        )
