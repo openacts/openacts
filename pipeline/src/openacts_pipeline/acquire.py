@@ -31,7 +31,7 @@ from openacts_pipeline.common import (
     utc_now,
     write_json_result,
 )
-from openacts_pipeline.corpus import candidate, promote
+from openacts_pipeline.corpus import candidate, promote, review
 from openacts_pipeline.extract import extract
 from openacts_pipeline.ocr import setup_ocr_models
 from openacts_pipeline.structure import structure
@@ -537,6 +537,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     candidate_parser.add_argument("structure", type=Path)
     candidate_parser.add_argument("act", type=Path)
+    review_parser = subparsers.add_parser(
+        "review", help="preview or record a whole-candidate single review"
+    )
+    review_parser.add_argument("candidate", type=Path)
+    review_parser.add_argument("fidelity", choices=("single_reviewed",))
+    review_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="atomically update machine-extracted candidate provisions",
+    )
     promote_parser = subparsers.add_parser(
         "promote", help="validate or promote a reviewed corpus candidate"
     )
@@ -571,6 +581,12 @@ def main(argv: list[str] | None = None) -> int:
                 args.structure,
                 args.act,
                 cache_root=DEFAULT_CACHE_ROOT,
+            )
+        elif args.command == "review":
+            result = review(
+                args.candidate,
+                args.fidelity,
+                execute=args.execute,
             )
         else:
             result = promote(

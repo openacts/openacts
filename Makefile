@@ -1,4 +1,4 @@
-.PHONY: setup ocr-setup ocr-setup-execute test lint check acquire acquire-execute classify extract structure structure-execute candidate promote promote-execute
+.PHONY: setup ocr-setup ocr-setup-execute test lint check acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute
 
 setup:
 	uv sync --project pipeline
@@ -45,6 +45,16 @@ candidate:
 	@test -n "$(STRUCTURE)" || (echo "STRUCTURE is required" >&2; exit 2)
 	@test -n "$(ACT)" || (echo "ACT is required" >&2; exit 2)
 	uv run --project pipeline openacts candidate "$(STRUCTURE)" "$(ACT)"
+
+review:
+	@test -n "$(CANDIDATE)" || (echo "CANDIDATE is required" >&2; exit 2)
+	@test -n "$(FIDELITY)" || (echo "FIDELITY is required" >&2; exit 2)
+	uv run --project pipeline openacts review "$(CANDIDATE)" "$(FIDELITY)"
+
+review-execute:
+	@test -n "$(CANDIDATE)" || (echo "CANDIDATE is required" >&2; exit 2)
+	@test -n "$(FIDELITY)" || (echo "FIDELITY is required" >&2; exit 2)
+	uv run --project pipeline openacts review "$(CANDIDATE)" "$(FIDELITY)" --execute
 
 promote:
 	@test -n "$(CANDIDATE)" || (echo "CANDIDATE is required" >&2; exit 2)

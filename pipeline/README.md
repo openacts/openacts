@@ -193,13 +193,42 @@ Provision IDs, and writes the exact corpus layout under
 starts every Provision at `machine_extracted`; `citations.jsonl` starts empty.
 It never edits `corpus/`.
 
+The candidate root also contains `candidate.json`, a deterministic integrity
+manifest recording the Act and Source IDs, originating structure artifact,
+Provision count, and ordered Provision-ID digest. Review and promotion reject a
+candidate if records were added, removed, reordered, or renamed. A structural
+correction therefore belongs in the structure artifact followed by candidate
+regeneration; ordinary wording and fidelity corrections remain review edits.
+
 Schedules receive order-based permanent IDs (`schedule-1`, `schedule-2`, ...)
 regardless of whether the printed label says `SCHEDULE`, `FIRST SCHEDULE`, or an
 equivalent ordinal. The exact printed label remains in `display_label`.
 
-Review and correct those candidate files against the PDF. Change each checked
-Provision's `text_fidelity` to `single_reviewed`, `double_reviewed`, or
-`source_conflict`. Then validate the candidate without writing:
+Review and correct the candidate against the PDF. After checking every
+remaining machine-extracted Provision once, preview the whole-candidate fidelity
+change without writing:
+
+```sh
+make review \
+  CANDIDATE=source-cache/corpus-candidates/<candidate> \
+  FIDELITY=single_reviewed
+```
+
+The command reports the current and resulting fidelity counts. It records the
+reviewer's assertion; it does not perform or infer the review. Apply the change
+atomically only after checking that preview:
+
+```sh
+make review-execute \
+  CANDIDATE=source-cache/corpus-candidates/<candidate> \
+  FIDELITY=single_reviewed
+```
+
+The execute form changes only `machine_extracted` to `single_reviewed`, leaves
+all other record fields and fidelity values untouched, and revalidates candidate
+integrity after writing. Per-Provision `double_reviewed` and `source_conflict`
+decisions remain explicit review edits. Then validate the candidate without
+writing to the corpus:
 
 ```sh
 make promote CANDIDATE=source-cache/corpus-candidates/<candidate>

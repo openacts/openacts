@@ -9,7 +9,7 @@ import re
 import shutil
 import tempfile
 import unicodedata
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_DIR = REPO_ROOT / "schemas"
 DEFAULT_CACHE_ROOT = REPO_ROOT / "source-cache"
 DEFAULT_CORPUS_ROOT = REPO_ROOT / "corpus"
+CANDIDATE_VERSION = 1
 SCHEMA_FILES = {
     "act": "act.schema.json",
     "provision": "provision.schema.json",
@@ -551,6 +552,14 @@ def _jsonl_bytes(records: list[dict[str, Any]]) -> bytes:
     ).encode()
 
 
+def _ordered_provision_ids_sha256(provisions: list[dict[str, Any]]) -> str:
+    digest = hashlib.sha256()
+    for provision in provisions:
+        digest.update(provision["provision_id"].encode())
+        digest.update(b"\n")
+    return f"sha256:{digest.hexdigest()}"
+
+
 def _act_relative_dir(act: dict[str, Any]) -> Path:
     prefix = f"{act['jurisdiction']}-act-{act['year']}-"
     act_id = act["act_id"]
@@ -567,10 +576,14 @@ def _act_relative_dir(act: dict[str, Any]) -> Path:
 
 
 def _candidate_files(
-    act: dict[str, Any], provisions: list[dict[str, Any]], source: dict[str, Any]
+    act: dict[str, Any],
+    provisions: list[dict[str, Any]],
+    source: dict[str, Any],
+    manifest: dict[str, Any],
 ) -> dict[Path, bytes]:
     act_dir = _act_relative_dir(act)
     return {
+        Path("candidate.json"): _json_bytes(manifest),
         Path("sources.jsonl"): _jsonl_bytes([source]),
         act_dir / "act.json": _json_bytes(act),
         act_dir / "provisions.jsonl": _jsonl_bytes(provisions),
@@ -700,7 +713,21 @@ def candidate(
         raise PipelineError("invalid_structure", "structure provisions must be objects")
     provisions = _materialize_provisions(act["act_id"], drafts, source_id)
     _validate_records(act, provisions, [source], [])
-    files = _candidate_files(act, provisions, source)
+    try:
+        input_structure = structure_path.resolve().relative_to(cache_root.resolve())
+    except ValueError as exc:
+        raise PipelineError(
+            "invalid_input", "structure artifact must be inside the source cache"
+        ) from exc
+    manifest = {
+        "candidate_version": CANDIDATE_VERSION,
+        "act_id": act["act_id"],
+        "source_id": source_id,
+        "input_structure": input_structure.as_posix(),
+        "provision_count": len(provisions),
+        "ordered_provision_ids_sha256": _ordered_provision_ids_sha256(provisions),
+    }
+    files = _candidate_files(act, provisions, source, manifest)
     candidate_digest = hashlib.sha256()
     for path, content in sorted(files.items(), key=lambda item: item[0].as_posix()):
         candidate_digest.update(path.as_posix().encode())
@@ -744,6 +771,42 @@ def _load_candidate(
         raise PipelineError(
             "invalid_candidate", "candidate must contain exactly one act.json"
         )
+    manifest_path = candidate_path / "candidate.json"
+    if not manifest_path.is_file():
+        raise PipelineError(
+            "invalid_candidate", "candidate manifest is missing; regenerate candidate"
+        )
+    manifest = _read_json(manifest_path, code="invalid_candidate")
+    expected_manifest_fields = {
+        "candidate_version",
+        "act_id",
+        "source_id",
+        "input_structure",
+        "provision_count",
+        "ordered_provision_ids_sha256",
+    }
+    if (
+        set(manifest) != expected_manifest_fields
+        or manifest.get("candidate_version") != CANDIDATE_VERSION
+        or not isinstance(manifest.get("act_id"), str)
+        or not isinstance(manifest.get("source_id"), str)
+        or not isinstance(manifest.get("input_structure"), str)
+        or not manifest.get("input_structure")
+        or not isinstance(manifest.get("provision_count"), int)
+        or isinstance(manifest.get("provision_count"), bool)
+        or manifest.get("provision_count", 0) < 1
+        or not isinstance(manifest.get("ordered_provision_ids_sha256"), str)
+        or re.fullmatch(
+            r"sha256:[0-9a-f]{64}",
+            manifest.get("ordered_provision_ids_sha256", ""),
+        )
+        is None
+    ):
+        raise PipelineError("invalid_candidate", "candidate manifest is malformed")
+    input_structure = Path(manifest["input_structure"])
+    if input_structure.is_absolute() or ".." in input_structure.parts:
+        raise PipelineError("invalid_candidate", "candidate manifest path is unsafe")
+
     act_path = act_paths[0]
     act_dir = act_path.parent
     act = _read_json(act_path, code="invalid_candidate")
@@ -753,6 +816,24 @@ def _load_candidate(
     if len(sources) != 1:
         raise PipelineError(
             "invalid_candidate", "candidate must contain exactly one Source"
+        )
+    if manifest["act_id"] != act.get("act_id") or manifest["source_id"] != sources[
+        0
+    ].get("source_id"):
+        raise PipelineError(
+            "candidate_integrity_failed", "candidate Act or Source identity changed"
+        )
+    if manifest["provision_count"] != len(provisions):
+        raise PipelineError(
+            "candidate_integrity_failed",
+            f"expected {manifest['provision_count']} provisions, found {len(provisions)}",
+        )
+    if manifest["ordered_provision_ids_sha256"] != _ordered_provision_ids_sha256(
+        provisions
+    ):
+        raise PipelineError(
+            "candidate_integrity_failed",
+            "ordered Provision IDs differ from the generated candidate",
         )
     _validate_records(act, provisions, sources, citations)
     if act_dir.relative_to(candidate_path) != _act_relative_dir(act):
@@ -784,6 +865,54 @@ def _atomic_write(path: Path, content: bytes) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def review(
+    candidate_path: Path,
+    fidelity: str,
+    *,
+    execute: bool = False,
+) -> dict[str, Any]:
+    """Preview or atomically record a whole-candidate single review."""
+    if fidelity != "single_reviewed":
+        raise PipelineError(
+            "invalid_review_fidelity", "review currently supports single_reviewed"
+        )
+    act, provisions, sources, _citations, candidate_act_dir = _load_candidate(
+        candidate_path
+    )
+    before = dict(sorted(Counter(p["text_fidelity"] for p in provisions).items()))
+    reviewed = [
+        (
+            {**provision, "text_fidelity": fidelity}
+            if provision["text_fidelity"] == "machine_extracted"
+            else provision
+        )
+        for provision in provisions
+    ]
+    changed = sum(
+        before_provision["text_fidelity"] != after_provision["text_fidelity"]
+        for before_provision, after_provision in zip(provisions, reviewed, strict=True)
+    )
+    after = dict(sorted(Counter(p["text_fidelity"] for p in reviewed).items()))
+    if execute and changed:
+        _atomic_write(candidate_act_dir / "provisions.jsonl", _jsonl_bytes(reviewed))
+        _load_candidate(candidate_path)
+
+    return {
+        "status": "success" if execute else "ready",
+        "network_access": False,
+        "execute": execute,
+        "candidate_path": candidate_path.as_posix(),
+        "act_id": act["act_id"],
+        "source_id": sources[0]["source_id"],
+        "target_fidelity": fidelity,
+        "provision_count": len(provisions),
+        "changed_provisions": changed,
+        "before_fidelity": before,
+        "after_fidelity": after,
+        "reused": changed == 0,
+    }
 
 
 def promote(

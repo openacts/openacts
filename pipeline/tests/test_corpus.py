@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from openacts_pipeline.common import PipelineError
-from openacts_pipeline.corpus import candidate, promote
+from openacts_pipeline.corpus import candidate, promote, review
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests/fixtures/valid"
@@ -142,6 +142,16 @@ def test_candidate_is_deterministic_and_promotion_requires_review(
     assert first["candidate_path"] == second["candidate_path"]
     assert second["reused"] is True
     candidate_path = cache_root / first["candidate_path"]
+    manifest = json.loads((candidate_path / "candidate.json").read_text())
+    assert manifest == {
+        "candidate_version": 1,
+        "act_id": "ng-federal-act-2023-37",
+        "source_id": first["source_id"],
+        "input_structure": "structures/structure.json",
+        "provision_count": 14,
+        "ordered_provision_ids_sha256": manifest["ordered_provision_ids_sha256"],
+    }
+    assert manifest["ordered_provision_ids_sha256"].startswith("sha256:")
     provisions_path = next(candidate_path.glob("**/provisions.jsonl"))
     provisions = [json.loads(line) for line in provisions_path.read_text().splitlines()]
     assert [record["provision_id"].split(":", 1)[1] for record in provisions] == [
@@ -165,15 +175,34 @@ def test_candidate_is_deterministic_and_promotion_requires_review(
     with pytest.raises(PipelineError, match="machine_extracted"):
         promote(candidate_path, execute=True, cache_root=cache_root)
 
-    for provision in provisions:
-        provision["text_fidelity"] = "single_reviewed"
-    provisions_path.write_text(
-        "".join(
-            json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
-            for record in provisions
-        ),
-        encoding="utf-8",
-    )
+    before_review = provisions_path.read_bytes()
+    review_preview = review(candidate_path, "single_reviewed")
+    assert review_preview["status"] == "ready"
+    assert review_preview["changed_provisions"] == 14
+    assert review_preview["before_fidelity"] == {"machine_extracted": 14}
+    assert review_preview["after_fidelity"] == {"single_reviewed": 14}
+    assert provisions_path.read_bytes() == before_review
+
+    review_result = review(candidate_path, "single_reviewed", execute=True)
+    assert review_result["status"] == "success"
+    reviewed = [json.loads(line) for line in provisions_path.read_text().splitlines()]
+    assert [record["provision_id"] for record in reviewed] == [
+        record["provision_id"] for record in provisions
+    ]
+    assert all(record["text_fidelity"] == "single_reviewed" for record in reviewed)
+    assert [
+        {key: value for key, value in record.items() if key != "text_fidelity"}
+        for record in reviewed
+    ] == [
+        {key: value for key, value in record.items() if key != "text_fidelity"}
+        for record in provisions
+    ]
+    assert review(candidate_path, "single_reviewed", execute=True)["reused"] is True
+
+    with pytest.raises(PipelineError) as invalid_fidelity:
+        review(candidate_path, "double_reviewed")
+    assert invalid_fidelity.value.code == "invalid_review_fidelity"
+
     corpus_root = tmp_path / "corpus"
     source_bytes = (candidate_path / "sources.jsonl").read_bytes()
     corpus_root.mkdir()
@@ -190,3 +219,25 @@ def test_candidate_is_deterministic_and_promotion_requires_review(
     assert result["status"] == "success"
     assert (corpus_root / "ng/federal/acts/2023/37/act.json").exists()
     assert (corpus_root / "sources.jsonl").read_bytes() == source_bytes
+
+
+def test_promotion_rejects_a_truncated_candidate(tmp_path: Path) -> None:
+    cache_root, structure, act_path = _pipeline(tmp_path)
+    result = candidate(structure, act_path, cache_root=cache_root)
+    candidate_path = cache_root / result["candidate_path"]
+    provisions_path = next(candidate_path.glob("**/provisions.jsonl"))
+    provisions = [json.loads(line) for line in provisions_path.read_text().splitlines()]
+    for provision in provisions[:3]:
+        provision["text_fidelity"] = "single_reviewed"
+    provisions_path.write_text(
+        "".join(
+            json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+            for record in provisions[:3]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PipelineError) as error:
+        promote(candidate_path, cache_root=cache_root)
+    assert error.value.code == "candidate_integrity_failed"
+    assert str(error.value) == "expected 14 provisions, found 3"
