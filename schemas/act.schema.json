@@ -70,6 +70,12 @@
     "citation": {
       "$ref": "common.schema.json#/$defs/nullable_string"
     },
+    "text_kind": {
+      "enum": [
+        "as_enacted",
+        "consolidated"
+      ]
+    },
     "dates": {
       "type": "object",
       "additionalProperties": false,
