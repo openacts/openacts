@@ -4,6 +4,7 @@ from pathlib import Path
 from openacts_pipeline.structure_schema import (
     CANONICAL_NODE_TYPES,
     DraftNode,
+    DraftTableBlock,
     DraftTextBlock,
     StructureDraft,
     materialize_provisions,
@@ -60,4 +61,50 @@ def test_draft_schema_uses_canonical_types_and_materializes_content() -> None:
             "text": "Exact wording.",
             "source_spans": [{"source_id": SOURCE_ID, "pdf_page": 1}],
         }
+    ]
+
+
+def test_draft_node_recovers_table_block_misplaced_in_children() -> None:
+    draft = StructureDraft.model_validate(
+        {
+            "nodes": [
+                {
+                    "node_type": "schedule",
+                    "display_label": "FIRST SCHEDULE",
+                    "pdf_page": 217,
+                    "children": [
+                        {
+                            "node_type": "schedule_part",
+                            "display_label": "PART I",
+                            "pdf_page": 217,
+                            "children": [
+                                {
+                                    "node_type": "table",
+                                    "pdf_page": 217,
+                                    "kind": "table",
+                                    "column_count": 2,
+                                    "header_row_count": 1,
+                                    "rows": [["State", "Capital"], ["Abia", "Umuahia"]],
+                                    "pdf_pages": [217],
+                                    "layout_status": "faithfully_reconstructed",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    schedule_part = draft.nodes[0].children[0]
+    assert schedule_part.children == []
+    assert schedule_part.content_blocks == [
+        DraftTableBlock(
+            kind="table",
+            column_count=2,
+            header_row_count=1,
+            rows=[["State", "Capital"], ["Abia", "Umuahia"]],
+            pdf_pages=[217],
+            layout_status="faithfully_reconstructed",
+        )
     ]

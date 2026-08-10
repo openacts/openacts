@@ -172,6 +172,9 @@ DraftContentBlock = Annotated[
     DraftTextBlock | DraftListBlock | DraftTableBlock,
     Field(discriminator="kind"),
 ]
+CONTENT_BLOCK_KINDS = frozenset(
+    {"text", "quoted_text", "formula", "signature", "list", "table"}
+)
 
 DraftListItem.model_rebuild()
 DraftListBlock.model_rebuild()
@@ -187,6 +190,66 @@ class DraftNode(BaseModel):
     pdf_page: int = Field(ge=1)
     content_blocks: list[DraftContentBlock] = Field(default_factory=list)
     children: list[DraftNode] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def recover_misplaced_content_blocks(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        children = value.get("children")
+        content_blocks = value.get("content_blocks", [])
+        if not isinstance(children, list) or not isinstance(content_blocks, list):
+            return value
+
+        remaining_children: list[Any] = []
+        misplaced_blocks: list[dict[str, Any]] = []
+        for child in children:
+            if not isinstance(child, dict) or child.get("kind") not in (
+                CONTENT_BLOCK_KINDS
+            ):
+                remaining_children.append(child)
+                continue
+            if "node_type" not in child:
+                misplaced_blocks.append(child)
+                continue
+            if not (
+                child.get("kind") == "table"
+                and child.get("node_type") == "table"
+                and not child.get("display_label")
+                and not child.get("heading")
+                and not child.get("children")
+                and not child.get("content_blocks")
+            ):
+                remaining_children.append(child)
+                continue
+
+            # An unlabeled table is an embedded block, not an independent
+            # Provision, even when a provider redundantly emits node fields.
+            misplaced_blocks.append(
+                {
+                    key: item
+                    for key, item in child.items()
+                    if key
+                    not in {
+                        "node_type",
+                        "display_label",
+                        "heading",
+                        "pdf_page",
+                        "content_blocks",
+                        "children",
+                    }
+                }
+            )
+        if not misplaced_blocks:
+            return value
+
+        # Model providers occasionally put a valid content block in the adjacent
+        # children field; relocate it, then let the strict block schema audit it.
+        return {
+            **value,
+            "children": remaining_children,
+            "content_blocks": [*content_blocks, *misplaced_blocks],
+        }
 
     @model_validator(mode="after")
     def require_visible_content(self) -> DraftNode:
