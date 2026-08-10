@@ -61,6 +61,9 @@ def test_contract() -> None:
         validators[record_type].validate(fixture)
     constitution = load_json(FIXTURE_DIR / "constitution.json")
     validators["act"].validate(constitution)
+    consolidated_constitution = copy.deepcopy(constitution)
+    consolidated_constitution["text_kind"] = "consolidated"
+    validators["act"].validate(consolidated_constitution)
 
     legacy_provision = copy.deepcopy(fixtures["provision"])
     legacy_provision["version_id"] = "ng-federal-act-2023-37@2023-06-12:eng"
@@ -79,6 +82,9 @@ def test_contract() -> None:
 
     unknown_act_status = copy.deepcopy(fixtures["act"])
     unknown_act_status["status"] = "active"
+
+    unknown_text_kind = copy.deepcopy(fixtures["act"])
+    unknown_text_kind["text_kind"] = "restated"
 
     duplicate_authority = copy.deepcopy(fixtures["act"])
     duplicate_authority["source_refs"].append(
@@ -111,6 +117,7 @@ def test_contract() -> None:
         ("legacy document type", "act", legacy_document_type),
         ("duplicated Act language", "act", duplicated_language),
         ("unknown Act status", "act", unknown_act_status),
+        ("unknown Act text kind", "act", unknown_text_kind),
         ("multiple authoritative Sources", "act", duplicate_authority),
         ("Act-owned Source", "source", owned_source),
         ("non-PDF Source", "source", html_source),

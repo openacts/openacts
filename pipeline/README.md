@@ -175,7 +175,10 @@ assigned later; this stage never edits `corpus/`.
 ## Build and review a corpus candidate
 
 Create one schema-valid Act record containing the human-authored metadata and
-the authoritative `source_id`, then materialize the structured draft:
+the authoritative `source_id`, then materialize the structured draft. Set
+`text_kind` to `consolidated` when that Source presents consolidated wording;
+the Source relation and editorial notes must state its boundary and must not
+imply that OpenActs independently produced or verified the consolidation:
 
 ```sh
 make candidate \

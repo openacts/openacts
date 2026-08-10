@@ -437,6 +437,23 @@ def _local_provision_id(
         heading = node.get("heading")
         if isinstance(heading, str):
             token = _slug(heading) or None
+    if (
+        token is None
+        and parent_local_id is not None
+        and node_type
+        in {
+            "subsection",
+            "paragraph",
+            "subparagraph",
+            "schedule_paragraph",
+            "schedule_subparagraph",
+        }
+    ):
+        order = node.get("order")
+        # Printed continuations have no marker; initial sibling order gives them a
+        # readable ID without hashing text that may receive transcription fixes.
+        if isinstance(order, int) and not isinstance(order, bool) and order >= 1:
+            token = f"unnumbered-{order}"
     if token is None:
         raise PipelineError(
             "unassignable_provision_id",

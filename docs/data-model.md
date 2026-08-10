@@ -13,17 +13,20 @@ corpus data is merged. Neither silently overrides the other.
 The canonical corpus has four records: **Act**, **Provision**, **Source**, and
 **Citation**. Together they let a reader or program:
 
-- find an Act, including the Constitution, and read its enacted text;
+- find an Act, including the Constitution, and read its stated text;
 - traverse its hierarchy in legal reading order;
 - trace every transcribed passage to exact Source pages;
 - follow resolved cross-references between Acts and Provisions; and
 - reproduce an immutable corpus release.
 
-OpenActs publishes instruments as enacted. An Amendment Act is another Act in
-the corpus; Citations may link its wording to the Act or Provision it names.
-The alpha does not author amendment operations, apply amendments, generate
-consolidated text, or maintain a separate Version record. Corpus releases carry
-transcription and metadata corrections.
+An Act directly owns one text: normally its as-enacted wording, or wording from
+an acquired Source that explicitly presents a consolidation. `text_kind`
+distinguishes those cases; its omission means `as_enacted` for records authored
+before the field was introduced. An Amendment Act is another Act in the corpus,
+and Citations may link its wording to the Act or Provision it names. The alpha
+does not author amendment operations, generate consolidations, or maintain a
+separate Version record. Corpus releases carry transcription and metadata
+corrections, not different legal states of the same Act.
 
 The canonical model is native to OpenActs. It is not Akoma Ntoso, ELI, a generic
 knowledge graph, a database schema, or a frontend response model. An adapter may
@@ -81,6 +84,12 @@ corpus correction does not change it. When two distinct Provisions would
 otherwise receive the same ID, the later assignment receives a stored collision
 suffix such as `~2`; the suffix is never removed or recomputed.
 
+A printed continuation at subsection, paragraph, or subparagraph level may have
+no visible marker. At initial materialization it receives an
+`unnumbered-<sibling-order>` segment, such as
+`section-35.subsection-4.paragraph-unnumbered-3`. That assigned ID is retained
+after promotion; later text corrections do not recompute it.
+
 The six-digit Citation sequence is assigned once within its source Act. It
 expresses identity, not current file order, and is not renumbered after a
 Citation is removed or moved.
@@ -93,23 +102,28 @@ transcription creates a new corpus release; it does not invent a legal Version.
 
 ### Act
 
-An Act is the stable discovery and ownership record for one enacted legal
-instrument. The Constitution uses this same record and has no subtype, separate
+An Act is the stable discovery and ownership record for one legal instrument.
+The Constitution uses this same record and has no subtype, separate
 schema, or separate frontend model. This is an OpenActs corpus boundary, not a
 claim that every instrument has the same formal legal classification.
-The enacted document's language belongs to its authoritative Source rather than
-being duplicated on the Act. A later multilingual corpus requires an explicit
-Edition decision, as recorded in decision 0018.
+The document's language belongs to its authoritative Source rather than being
+duplicated on the Act. A later multilingual corpus requires an explicit Edition
+decision, as recorded in decision 0018.
 
 An unknown date is explicit: `date` is `null` and `null_reason` states why. An
-empty string never means unknown. Act status is discovery metadata, not a claim
-that OpenActs has consolidated later amendments into the displayed text.
+empty string never means unknown. Act status is discovery metadata and remains
+separate from whether the displayed wording is as enacted or consolidated.
+
+`text_kind` is `as_enacted` or `consolidated`. It describes only the displayed
+wording. For a consolidation, the authoritative Source's `scope_note` and the
+Act's editorial notes state its boundary and whether OpenActs independently
+verified it. It is not a generic claim that the wording is current.
 
 `status` is a closed enum: `in_force`, `repealed`, `spent`,
 `not_yet_commenced`, `mixed`, or `unknown`. Any value other than `unknown`
 requires a non-null `checked_through_date` and at least one supporting Source.
 
-`source_refs` records how exact Source files support the enacted text. Exactly
+`source_refs` records how exact Source files support the displayed text. Exactly
 one is the `authoritative_text` used for transcription. Other Sources may be a
 certified copy, official mirror, comparison copy, or metadata evidence.
 
@@ -118,6 +132,7 @@ certified copy, official mirror, comparison copy, or metadata evidence.
 | `schema_version`, `record_type`, `act_id` | Contract discriminator and permanent instrument identity. |
 | `jurisdiction`, `country_code` | Legal authority, not the document host. |
 | `titles`, `year`, `number`, `citation` | Human discovery and citation metadata. `number` is `null` when the instrument has no conventional Act number. |
+| `text_kind` | Whether the displayed wording is `as_enacted` or Source-declared `consolidated`; omission retains the legacy `as_enacted` meaning. |
 | `dates` | Assent, publication, commencement, and repeal claims with evidence or a null reason. |
 | `aliases` | Known lookup names. |
 | `status`, `checked_through_date`, `status_source_ids` | Instrument-level status, research boundary, and evidence. |
@@ -289,7 +304,8 @@ stated Sources:
 - `source_conflict`.
 
 Act-level coverage is generated from its Provisions rather than authored twice.
-Fidelity does not claim that the enacted text is a current consolidation. Git
+Fidelity does not claim that displayed text is current or that a Source-declared
+consolidation was independently verified by OpenActs. Git
 commits, pull requests, and repository history provide the review trail;
 reviewer workflow metadata is not duplicated in canonical records.
 

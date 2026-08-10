@@ -1,6 +1,6 @@
 # 0018 — Direct Act and Provision corpus
 
-**Status:** Accepted
+**Status:** Accepted; the as-enacted-only restriction is superseded by [0020 — Source-declared consolidated Act text](0020-source-declared-consolidated-act-text.md)
 **Date:** 6 August 2026
 
 ## Context
