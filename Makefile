@@ -1,4 +1,4 @@
-.PHONY: setup ocr-setup ocr-setup-execute test lint check acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection projection-execute
+.PHONY: setup ocr-setup ocr-setup-execute test lint check api-check api-run acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection projection-execute
 
 setup:
 	uv sync --project pipeline
@@ -15,7 +15,15 @@ test:
 lint:
 	uv run --project pipeline ruff check pipeline/src pipeline/tests tests/test_contract.py
 
-check: lint test
+check: lint test api-check
+
+api-check:
+	uv run --project api ruff check api/src api/tests
+	uv run --project api pytest api/tests
+
+api-run:
+	@test -f api/.env || (echo "api/.env is required; copy api/.env.example" >&2; exit 2)
+	OPENACTS_APPLICATION_REVISION="$$(git rev-parse HEAD)" uv run --env-file api/.env --project api uvicorn openacts_api.app:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
 
 acquire:
 	@test -n "$(REQUEST)" || (echo "REQUEST is required" >&2; exit 2)
