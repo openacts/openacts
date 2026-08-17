@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import shutil
@@ -13,22 +12,23 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from jsonschema import Draft202012Validator, FormatChecker
-from referencing import Registry, Resource
-
 from openacts_pipeline.common import PipelineError, verify_cached_pdf
+from openacts_pipeline.corpus_files import (
+    CorpusRecords,
+    act_relative_dir,
+    json_bytes,
+    jsonl_bytes,
+    read_corpus_records,
+    read_json,
+    read_jsonl,
+)
+from openacts_pipeline.corpus_schema import build_registry, validate_record
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_DIR = REPO_ROOT / "schemas"
 DEFAULT_CACHE_ROOT = REPO_ROOT / "source-cache"
 DEFAULT_CORPUS_ROOT = REPO_ROOT / "corpus"
 CANDIDATE_VERSION = 1
-SCHEMA_FILES = {
-    "act": "act.schema.json",
-    "provision": "provision.schema.json",
-    "source": "source.schema.json",
-    "citation": "citation.schema.json",
-}
 
 
 def _require(condition: bool, message: str) -> None:
@@ -190,7 +190,7 @@ def validate_corpus(
             f"Act evidence is absent from source_refs: {act_id}",
         )
 
-    children: dict[tuple[str, str | None], list[int]] = defaultdict(list)
+    children: dict[tuple[str, str | None], list[dict[str, Any]]] = defaultdict(list)
     content_by_provision: dict[str, dict[str, dict[str, Any]]] = {}
     for provision in provisions:
         provision_id = provision["provision_id"]
@@ -207,7 +207,7 @@ def validate_corpus(
                 _act_id_from_provision_id(parent_id) == act_id,
                 f"cross-Act Provision parent: {parent_id}",
             )
-        children[(act_id, parent_id)].append(provision["order"])
+        children[(act_id, parent_id)].append(provision)
 
         blocks, source_spans = _collect_provision_content(provision)
         content_by_provision[provision_id] = blocks
@@ -225,7 +225,8 @@ def validate_corpus(
                 f"PDF page exceeds Source page_count: {source_id}",
             )
 
-    for (act_id, parent_id), orders in children.items():
+    for (act_id, parent_id), siblings in children.items():
+        orders = [provision["order"] for provision in siblings]
         _require(
             sorted(orders) == list(range(1, len(orders) + 1)),
             f"incomplete sibling order under {parent_id or act_id}",
@@ -240,6 +241,32 @@ def validate_corpus(
             )
             seen_parents.add(parent_id)
             parent_id = provisions_by_id[parent_id]["parent_provision_id"]
+
+    for act_id in acts_by_id:
+        expected_ids: list[str] = []
+        stack = sorted(
+            children[(act_id, None)], key=lambda provision: provision["order"], reverse=True
+        )
+        while stack:
+            provision = stack.pop()
+            provision_id = provision["provision_id"]
+            expected_ids.append(provision_id)
+            stack.extend(
+                sorted(
+                    children[(act_id, provision_id)],
+                    key=lambda child: child["order"],
+                    reverse=True,
+                )
+            )
+        actual_ids = [
+            provision["provision_id"]
+            for provision in provisions
+            if _act_id_from_provision_id(provision["provision_id"]) == act_id
+        ]
+        _require(
+            actual_ids == expected_ids,
+            f"Provisions are not stored in legal order: {act_id}",
+        )
 
     for citation in citations:
         source_provision_id = citation["source_provision_id"]
@@ -281,68 +308,8 @@ def validate_corpus(
             )
 
 
-def _registry() -> Registry:
-    return Registry().with_resources(
-        (
-            path.resolve().as_uri(),
-            Resource.from_contents(json.loads(path.read_text(encoding="utf-8"))),
-        )
-        for path in SCHEMA_DIR.glob("*.schema.json")
-    )
-
-
-def _validate_record(record_type: str, record: dict[str, Any]) -> None:
-    schema_path = SCHEMA_DIR / SCHEMA_FILES[record_type]
-    validator = Draft202012Validator(
-        {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$ref": schema_path.resolve().as_uri(),
-        },
-        registry=_registry(),
-        format_checker=FormatChecker(),
-    )
-    errors = sorted(validator.iter_errors(record), key=lambda error: list(error.path))
-    if errors:
-        error = errors[0]
-        field = ".".join(str(part) for part in error.path) or record_type
-        raise PipelineError("invalid_corpus_record", f"{field}: {error.message}")
-
-
-def _read_json(path: Path, *, code: str = "invalid_input") -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise PipelineError(code, f"cannot read {path}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise PipelineError(code, f"{path} must contain a JSON object")
-    return value
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        raise PipelineError("invalid_candidate", f"cannot read {path}: {exc}") from exc
-    records: list[dict[str, Any]] = []
-    for line_number, line in enumerate(lines, start=1):
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise PipelineError(
-                "invalid_candidate", f"{path}:{line_number}: {exc.msg}"
-            ) from exc
-        if not isinstance(record, dict):
-            raise PipelineError(
-                "invalid_candidate", f"{path}:{line_number} must be a JSON object"
-            )
-        records.append(record)
-    return records
-
-
 def _load_stage(path: Path, stage: str) -> dict[str, Any]:
-    value = _read_json(path)
+    value = read_json(path)
     if value.get("stage") != stage or value.get("status") != "success":
         raise PipelineError(
             "invalid_input", f"{path} is not a successful {stage} artifact"
@@ -541,17 +508,6 @@ def _materialize_provisions(
     return provisions
 
 
-def _json_bytes(record: dict[str, Any]) -> bytes:
-    return (json.dumps(record, ensure_ascii=False, indent=2) + "\n").encode()
-
-
-def _jsonl_bytes(records: list[dict[str, Any]]) -> bytes:
-    return "".join(
-        json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
-        for record in records
-    ).encode()
-
-
 def _ordered_provision_ids_sha256(provisions: list[dict[str, Any]]) -> str:
     digest = hashlib.sha256()
     for provision in provisions:
@@ -560,19 +516,62 @@ def _ordered_provision_ids_sha256(provisions: list[dict[str, Any]]) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
-def _act_relative_dir(act: dict[str, Any]) -> Path:
-    prefix = f"{act['jurisdiction']}-act-{act['year']}-"
-    act_id = act["act_id"]
-    if not act_id.startswith(prefix):
-        raise PipelineError("invalid_act_path", f"act_id must begin with {prefix}")
-    slug = act_id.removeprefix(prefix)
-    country = act["country_code"].lower()
-    jurisdiction_parts = act["jurisdiction"].split("-")
-    if jurisdiction_parts[0] != country:
+def load_corpus(
+    corpus_root: Path = DEFAULT_CORPUS_ROOT,
+    *,
+    schema_dir: Path = SCHEMA_DIR,
+) -> CorpusRecords:
+    """Load and validate one complete canonical corpus directory."""
+    records = read_corpus_records(corpus_root)
+    registry = build_registry(schema_dir)
+    for source in records.sources:
+        validate_record("source", source, schema_dir=schema_dir, registry=registry)
+    source_ids = [source["source_id"] for source in records.sources]
+    if source_ids != sorted(source_ids):
         raise PipelineError(
-            "invalid_act_path", "country_code and jurisdiction disagree"
+            "invalid_corpus", "sources.jsonl must be sorted by source_id"
         )
-    return Path(country, *jurisdiction_parts[1:], "acts", str(act["year"]), slug)
+    for act, relative_dir, provisions, citations in zip(
+        records.acts,
+        records.act_directories,
+        records.provision_groups,
+        records.citation_groups,
+        strict=True,
+    ):
+        validate_record("act", act, schema_dir=schema_dir, registry=registry)
+        if relative_dir != act_relative_dir(act):
+            raise PipelineError(
+                "invalid_corpus", f"Act directory does not match {act['act_id']}"
+            )
+        for provision in provisions:
+            validate_record(
+                "provision", provision, schema_dir=schema_dir, registry=registry
+            )
+            if not provision["provision_id"].startswith(f"{act['act_id']}:"):
+                raise PipelineError(
+                    "invalid_corpus",
+                    f"Provision is stored under the wrong Act: "
+                    f"{provision['provision_id']}",
+                )
+        for citation in citations:
+            validate_record(
+                "citation", citation, schema_dir=schema_dir, registry=registry
+            )
+            if not citation["source_provision_id"].startswith(f"{act['act_id']}:"):
+                raise PipelineError(
+                    "invalid_corpus",
+                    f"Citation is stored under the wrong Act: {citation['citation_id']}",
+                )
+    try:
+        validate_corpus(
+            list(records.acts),
+            list(records.provisions),
+            list(records.sources),
+            list(records.citations),
+        )
+    except (AssertionError, KeyError, TypeError) as exc:
+        raise PipelineError("invalid_corpus", str(exc)) from exc
+    return records
 
 
 def _candidate_files(
@@ -581,12 +580,12 @@ def _candidate_files(
     source: dict[str, Any],
     manifest: dict[str, Any],
 ) -> dict[Path, bytes]:
-    act_dir = _act_relative_dir(act)
+    act_dir = act_relative_dir(act)
     return {
-        Path("candidate.json"): _json_bytes(manifest),
-        Path("sources.jsonl"): _jsonl_bytes([source]),
-        act_dir / "act.json": _json_bytes(act),
-        act_dir / "provisions.jsonl": _jsonl_bytes(provisions),
+        Path("candidate.json"): json_bytes(manifest),
+        Path("sources.jsonl"): jsonl_bytes([source]),
+        act_dir / "act.json": json_bytes(act),
+        act_dir / "provisions.jsonl": jsonl_bytes(provisions),
         act_dir / "citations.jsonl": b"",
     }
 
@@ -630,13 +629,14 @@ def _validate_records(
     sources: list[dict[str, Any]],
     citations: list[dict[str, Any]],
 ) -> None:
-    _validate_record("act", act)
+    registry = build_registry(SCHEMA_DIR)
+    validate_record("act", act, registry=registry)
     for provision in provisions:
-        _validate_record("provision", provision)
+        validate_record("provision", provision, registry=registry)
     for source in sources:
-        _validate_record("source", source)
+        validate_record("source", source, registry=registry)
     for citation in citations:
-        _validate_record("citation", citation)
+        validate_record("citation", citation, registry=registry)
     try:
         validate_corpus([act], provisions, sources, citations)
     except (AssertionError, KeyError, TypeError) as exc:
@@ -651,8 +651,8 @@ def candidate(
 ) -> dict[str, Any]:
     """Create an exact corpus-shaped candidate without changing the corpus."""
     structure_artifact = _load_stage(structure_path, "structure")
-    act = _read_json(act_path, code="invalid_act")
-    _validate_record("act", act)
+    act = read_json(act_path, code="invalid_act")
+    validate_record("act", act)
 
     extraction = _load_stage(
         _cache_reference(cache_root, structure_artifact.get("input_extraction")),
@@ -662,7 +662,7 @@ def candidate(
         _cache_reference(cache_root, extraction.get("input_classification")),
         "classify",
     )
-    receipt = _read_json(
+    receipt = read_json(
         _cache_reference(cache_root, classification.get("input_receipt"))
     )
     if receipt.get("status") != "success" or not isinstance(
@@ -694,7 +694,7 @@ def candidate(
 
     source = dict(receipt["source"])
     source["text_layer"] = classification.get("summary", {}).get("proposed_text_layer")
-    _validate_record("source", source)
+    validate_record("source", source)
     digest = source_id.removeprefix("sha256:")
     cache_path = receipt.get("cache_path")
     if not isinstance(cache_path, str):
@@ -776,7 +776,7 @@ def _load_candidate(
         raise PipelineError(
             "invalid_candidate", "candidate manifest is missing; regenerate candidate"
         )
-    manifest = _read_json(manifest_path, code="invalid_candidate")
+    manifest = read_json(manifest_path, code="invalid_candidate")
     expected_manifest_fields = {
         "candidate_version",
         "act_id",
@@ -809,10 +809,10 @@ def _load_candidate(
 
     act_path = act_paths[0]
     act_dir = act_path.parent
-    act = _read_json(act_path, code="invalid_candidate")
-    sources = _read_jsonl(candidate_path / "sources.jsonl")
-    provisions = _read_jsonl(act_dir / "provisions.jsonl")
-    citations = _read_jsonl(act_dir / "citations.jsonl")
+    act = read_json(act_path, code="invalid_candidate")
+    sources = read_jsonl(candidate_path / "sources.jsonl")
+    provisions = read_jsonl(act_dir / "provisions.jsonl")
+    citations = read_jsonl(act_dir / "citations.jsonl")
     if len(sources) != 1:
         raise PipelineError(
             "invalid_candidate", "candidate must contain exactly one Source"
@@ -836,7 +836,7 @@ def _load_candidate(
             "ordered Provision IDs differ from the generated candidate",
         )
     _validate_records(act, provisions, sources, citations)
-    if act_dir.relative_to(candidate_path) != _act_relative_dir(act):
+    if act_dir.relative_to(candidate_path) != act_relative_dir(act):
         raise PipelineError(
             "invalid_candidate", "candidate Act directory does not match act_id"
         )
@@ -896,7 +896,7 @@ def review(
     )
     after = dict(sorted(Counter(p["text_fidelity"] for p in reviewed).items()))
     if execute and changed:
-        _atomic_write(candidate_act_dir / "provisions.jsonl", _jsonl_bytes(reviewed))
+        _atomic_write(candidate_act_dir / "provisions.jsonl", jsonl_bytes(reviewed))
         _load_candidate(candidate_path)
 
     return {
@@ -931,10 +931,10 @@ def promote(
     machine_count = sum(
         provision["text_fidelity"] == "machine_extracted" for provision in provisions
     )
-    target_relative = _act_relative_dir(act)
+    target_relative = act_relative_dir(act)
     target_dir = corpus_root / target_relative
     existing_sources = (
-        _read_jsonl(corpus_root / "sources.jsonl")
+        read_jsonl(corpus_root / "sources.jsonl")
         if (corpus_root / "sources.jsonl").exists()
         else []
     )
@@ -971,7 +971,7 @@ def promote(
         by_id[source["source_id"]] = source
         _atomic_write(
             corpus_root / "sources.jsonl",
-            _jsonl_bytes(
+            jsonl_bytes(
                 sorted(by_id.values(), key=lambda record: record["source_id"])
             ),
         )
@@ -981,9 +981,9 @@ def promote(
         tempfile.mkdtemp(prefix=f".{target_dir.name}-", dir=target_dir.parent)
     )
     try:
-        (temporary / "act.json").write_bytes(_json_bytes(act))
-        (temporary / "provisions.jsonl").write_bytes(_jsonl_bytes(provisions))
-        (temporary / "citations.jsonl").write_bytes(_jsonl_bytes(citations))
+        (temporary / "act.json").write_bytes(json_bytes(act))
+        (temporary / "provisions.jsonl").write_bytes(jsonl_bytes(provisions))
+        (temporary / "citations.jsonl").write_bytes(jsonl_bytes(citations))
         os.replace(temporary, target_dir)
     finally:
         if temporary.exists():

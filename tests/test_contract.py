@@ -165,6 +165,10 @@ def test_contract() -> None:
     incomplete_order["provisions"][1]["order"] = 3
     assert_invalid_corpus("incomplete Provision order", **incomplete_order)
 
+    wrong_file_order = copy.deepcopy(corpus)
+    wrong_file_order["provisions"].reverse()
+    assert_invalid_corpus("Provision file order", **wrong_file_order)
+
     parent_cycle = copy.deepcopy(corpus)
     parent_cycle["provisions"][0]["parent_provision_id"] = parent_cycle["provisions"][
         1

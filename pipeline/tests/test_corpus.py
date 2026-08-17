@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from openacts_pipeline.common import PipelineError
-from openacts_pipeline.corpus import candidate, promote, review
+from openacts_pipeline.corpus import candidate, load_corpus, promote, review
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests/fixtures/valid"
@@ -23,6 +23,59 @@ def _replace_source_id(record: dict, source_id: str) -> dict:
 def _write_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value), encoding="utf-8")
+
+
+def _write_jsonl(path: Path, values: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(value) + "\n" for value in values), encoding="utf-8"
+    )
+
+
+def test_load_corpus_validates_complete_canonical_layout(tmp_path: Path) -> None:
+    corpus_root = tmp_path / "corpus"
+    act_dir = corpus_root / "ng/federal/acts/2023/37"
+    _write_json(act_dir / "act.json", _load("act.json"))
+    _write_jsonl(corpus_root / "sources.jsonl", [_load("source.json")])
+    _write_jsonl(act_dir / "provisions.jsonl", [_load("provision.json")])
+    _write_jsonl(act_dir / "citations.jsonl", [_load("citation.json")])
+
+    records = load_corpus(corpus_root, schema_dir=ROOT / "schemas")
+    assert len(records.acts) == 1
+    assert len(records.provisions) == 1
+    assert len(records.sources) == 1
+    assert len(records.citations) == 1
+    assert records.schema_versions == ("0.1.0",)
+    assert records.act_directories == (Path("ng/federal/acts/2023/37"),)
+
+    later_source = dict(_load("source.json"))
+    later_source["source_id"] = "sha256:" + "b" * 64
+    _write_jsonl(
+        corpus_root / "sources.jsonl", [later_source, _load("source.json")]
+    )
+    with pytest.raises(PipelineError) as unsorted:
+        load_corpus(corpus_root, schema_dir=ROOT / "schemas")
+    assert unsorted.value.code == "invalid_corpus"
+    assert "sorted by source_id" in str(unsorted.value)
+
+    _write_jsonl(corpus_root / "sources.jsonl", [_load("source.json")])
+    (act_dir / "notes.txt").write_text("not canonical", encoding="utf-8")
+    with pytest.raises(PipelineError) as unexpected_file:
+        load_corpus(corpus_root, schema_dir=ROOT / "schemas")
+    assert unexpected_file.value.code == "invalid_corpus"
+    assert "unexpected" in str(unexpected_file.value)
+    (act_dir / "notes.txt").unlink()
+
+    with pytest.raises(PipelineError) as missing_schemas:
+        load_corpus(corpus_root, schema_dir=tmp_path / "missing-schemas")
+    assert missing_schemas.value.code == "invalid_corpus_schema"
+
+    invalid_act = _load("act.json")
+    invalid_act["record_type"] = "source"
+    _write_json(act_dir / "act.json", invalid_act)
+    with pytest.raises(PipelineError) as invalid_record:
+        load_corpus(corpus_root, schema_dir=ROOT / "schemas")
+    assert invalid_record.value.code == "invalid_corpus_record"
 
 
 def _pipeline(tmp_path: Path) -> tuple[Path, Path, Path]:
