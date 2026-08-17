@@ -3,10 +3,14 @@ import json
 import os
 import shutil
 import subprocess
+import uuid
+from dataclasses import replace
 from pathlib import Path
 
 import psycopg
 import pytest
+from psycopg import sql
+from psycopg.conninfo import make_conninfo
 
 import openacts_pipeline.projection as projection_module
 from openacts_pipeline.common import PipelineError
@@ -52,7 +56,9 @@ def _write_jsonl(path: Path, values: list[dict]) -> None:
     )
 
 
-def _release_repo(tmp_path: Path) -> tuple[Path, Path]:
+def _release_repo(
+    tmp_path: Path, release_tag: str = "corpus-v0.0.0"
+) -> tuple[Path, Path]:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
@@ -94,8 +100,17 @@ def _release_repo(tmp_path: Path) -> tuple[Path, Path]:
     _write_jsonl(act_dir / "citations.jsonl", [_load("citation.json")])
     _git(repo, "add", "corpus", "schemas")
     _git(repo, "commit", "-q", "-m", "test corpus")
-    _git(repo, "tag", "-a", "corpus-v0.0.0", "-m", "test release")
+    _git(repo, "tag", "-a", release_tag, "-m", "test release")
     return repo, act_dir
+
+
+def _add_second_release(repo: Path, act_dir: Path) -> None:
+    act = _load("act.json")
+    act["titles"]["official"] = "Example Act 2023, revised projection"
+    _write_json(act_dir / "act.json", act)
+    _git(repo, "add", "corpus")
+    _git(repo, "commit", "-q", "-m", "second test release")
+    _git(repo, "tag", "-a", "corpus-v0.2.0", "-m", "second test release")
 
 
 def test_tagged_projection_uses_exact_commit_and_deterministic_rows(
@@ -330,18 +345,50 @@ def test_projection_has_its_own_cli_entrypoint(
     called: dict[str, object] = {}
 
     def preview(repo_root: object, release: str) -> dict[str, object]:
-        called.update(repo_root=repo_root, release=release)
+        called.update(mode="preview", repo_root=repo_root, release=release)
         return {"status": "ready", "action": "noop"}
 
+    def execute(
+        repo_root: object, release: str, *, allow_bootstrap: bool
+    ) -> dict[str, object]:
+        called.update(
+            mode="execute",
+            repo_root=repo_root,
+            release=release,
+            allow_bootstrap=allow_bootstrap,
+        )
+        return {"status": "success", "action": "noop"}
+
     monkeypatch.setattr(projection_module, "preview_projection", preview)
+    monkeypatch.setattr(
+        projection_module, "execute_projection", execute, raising=False
+    )
 
     assert projection_module.main(["corpus-v0.0.0"]) == 0
     assert called == {
+        "mode": "preview",
         "repo_root": projection_module.REPO_ROOT,
         "release": "corpus-v0.0.0",
     }
     assert json.loads(capsys.readouterr().out) == {
         "status": "ready",
+        "action": "noop",
+    }
+
+    assert (
+        projection_module.main(
+            ["corpus-v0.0.0", "--execute", "--allow-bootstrap"]
+        )
+        == 0
+    )
+    assert called == {
+        "mode": "execute",
+        "repo_root": projection_module.REPO_ROOT,
+        "release": "corpus-v0.0.0",
+        "allow_bootstrap": True,
+    }
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "success",
         "action": "noop",
     }
 
@@ -374,10 +421,50 @@ def _database_snapshot(database_url: str) -> dict[str, object]:
         }
 
 
-def test_projection_preview_is_read_only_on_postgres_17() -> None:
+@pytest.fixture
+def projection_database_url() -> str:
     database_url = os.environ.get("OPENACTS_TEST_DATABASE_URL")
-    if database_url is None:
+    if not database_url:
         pytest.skip("OPENACTS_TEST_DATABASE_URL is not configured")
+    schema_name = f"projection_test_{uuid.uuid4().hex}"
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        connection.execute(
+            sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema_name))
+        )
+    isolated_url = make_conninfo(
+        database_url, options=f"-csearch_path={schema_name}"
+    )
+    try:
+        with psycopg.connect(isolated_url, autocommit=True) as connection:
+            connection.execute(
+                (ROOT / "api/sql/001_projection.sql").read_text(encoding="utf-8")
+            )
+        yield isolated_url
+    finally:
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            connection.execute(
+                sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema_name))
+            )
+
+
+def test_projection_execution_requires_explicit_bootstrap_override(
+    tmp_path: Path,
+) -> None:
+    repo, _act_dir = _release_repo(tmp_path)
+    with pytest.raises(PipelineError) as blocked:
+        projection_module.execute_projection(
+            repo,
+            "corpus-v0.0.0",
+            settings=ProjectionSettings(database_url="postgresql://unused"),
+        )
+
+    assert blocked.value.code == "bootstrap_release_blocked"
+
+
+def test_projection_preview_is_read_only_on_postgres_17(
+    projection_database_url: str,
+) -> None:
+    database_url = projection_database_url
     before = _database_snapshot(database_url)
 
     result = preview_projection(
@@ -397,3 +484,81 @@ def test_projection_preview_is_read_only_on_postgres_17() -> None:
         "citations": 0,
     }
     assert _database_snapshot(database_url) == before
+
+
+def test_projection_execute_imports_reuses_and_reactivates(
+    tmp_path: Path, projection_database_url: str
+) -> None:
+    repo, act_dir = _release_repo(tmp_path, "corpus-v0.1.0")
+    _add_second_release(repo, act_dir)
+    settings = ProjectionSettings(database_url=projection_database_url)
+
+    imported = projection_module.execute_projection(
+        repo, "corpus-v0.1.0", settings=settings
+    )
+    first_snapshot = _database_snapshot(projection_database_url)
+    reused = projection_module.execute_projection(
+        repo, "corpus-v0.1.0", settings=settings
+    )
+    assert reused["action"] == "noop"
+    assert reused["writes_performed"] is False
+    assert _database_snapshot(projection_database_url) == first_snapshot
+
+    projection_module.execute_projection(repo, "corpus-v0.2.0", settings=settings)
+    rollback = projection_module.execute_projection(
+        repo, "corpus-v0.1.0", settings=settings
+    )
+
+    assert imported["action"] == "import_and_activate"
+    assert first_snapshot["counts"] == (1, 1, 3, 1)
+    assert rollback["action"] == "activate_existing"
+    assert _database_snapshot(projection_database_url)["state"][0][1:3] == (
+        "corpus-v0.1.0",
+        "corpus-v0.2.0",
+    )
+
+
+def test_projection_execute_rolls_back_partial_import(
+    tmp_path: Path,
+    projection_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, act_dir = _release_repo(tmp_path, "corpus-v0.1.0")
+    _add_second_release(repo, act_dir)
+    settings = ProjectionSettings(database_url=projection_database_url)
+    projection_module.execute_projection(repo, "corpus-v0.1.0", settings=settings)
+    before = _database_snapshot(projection_database_url)
+    rows = build_projection_rows(load_tagged_corpus(repo, "corpus-v0.2.0"))
+    broken_citation = replace(rows.citations[0], target_act_id="missing-act")
+    broken_rows = replace(rows, citations=(broken_citation,))
+    monkeypatch.setattr(
+        projection_module, "build_projection_rows", lambda _tagged: broken_rows
+    )
+
+    with pytest.raises(PipelineError) as failed:
+        projection_module.execute_projection(
+            repo, "corpus-v0.2.0", settings=settings
+        )
+
+    assert failed.value.code == "projection_import_failed"
+    assert _database_snapshot(projection_database_url) == before
+
+
+def test_projection_execute_fails_fast_when_another_writer_holds_the_lock(
+    tmp_path: Path, projection_database_url: str
+) -> None:
+    repo, _act_dir = _release_repo(tmp_path, "corpus-v0.1.0")
+    settings = ProjectionSettings(database_url=projection_database_url)
+
+    with psycopg.connect(projection_database_url) as lock_connection:
+        lock_connection.execute(
+            "SELECT pg_advisory_xact_lock(%s)",
+            (projection_module.PROJECTION_ADVISORY_LOCK_ID,),
+        )
+        with pytest.raises(PipelineError) as busy:
+            projection_module.execute_projection(
+                repo, "corpus-v0.1.0", settings=settings
+            )
+
+    assert busy.value.code == "projection_busy"
+    assert busy.value.retryable is True

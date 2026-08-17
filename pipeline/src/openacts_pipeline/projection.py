@@ -10,13 +10,15 @@ import sys
 import tarfile
 import tempfile
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import date
 from pathlib import Path
 from typing import Any
 
 import psycopg
+from psycopg import sql
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from openacts_pipeline.common import PipelineError
 from openacts_pipeline.config import ProjectionSettings
@@ -28,6 +30,7 @@ COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 PROJECTION_SCHEMA_VERSION = 1
 SUPPORTED_CANONICAL_SCHEMA_VERSIONS = {"0.1.0"}
 TEXT_BLOCK_KINDS = {"text", "quoted_text", "formula", "signature"}
+PROJECTION_ADVISORY_LOCK_ID = int.from_bytes(b"OPENACTS", "big")
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_PROBES = (
     """
@@ -215,6 +218,15 @@ class DatabaseProjectionState:
     blockers: tuple[ProjectionBlocker, ...] = ()
 
 
+def _blocked_database_state(
+    server_major_version: int, transaction_read_only: bool, code: str, message: str
+) -> DatabaseProjectionState:
+    return DatabaseProjectionState(
+        server_major_version, transaction_read_only, None, None, None,
+        (ProjectionBlocker(code, message),),
+    )
+
+
 def _release_dict(release: DatabaseRelease | None) -> dict[str, Any] | None:
     if release is None:
         return None
@@ -246,10 +258,12 @@ def _pointed_release_blockers(
     return []
 
 
-def build_projection_plan(
-    rows: ProjectionRows, database: DatabaseProjectionState
-) -> dict[str, Any]:
-    """Choose the next projection action from validated rows and database state."""
+def _projection_action(
+    rows: ProjectionRows,
+    database: DatabaseProjectionState,
+    *,
+    expected_read_only: bool,
+) -> tuple[str, tuple[ProjectionBlocker, ...]]:
     blockers = list(database.blockers)
     if database.server_major_version != 17:
         blockers.append(
@@ -258,11 +272,19 @@ def build_projection_plan(
                 message="projection tooling is verified against PostgreSQL 17",
             )
         )
-    if not database.transaction_read_only:
+    if database.transaction_read_only != expected_read_only:
         blockers.append(
             ProjectionBlocker(
-                code="projection_not_read_only",
-                message="database inspection transaction is not read-only",
+                code=(
+                    "projection_not_read_only"
+                    if expected_read_only
+                    else "projection_database_read_only"
+                ),
+                message=(
+                    "database inspection transaction is not read-only"
+                    if expected_read_only
+                    else "projection execution transaction is read-only"
+                ),
             )
         )
     blockers.extend(_pointed_release_blockers("active", database.active_release))
@@ -296,17 +318,26 @@ def build_projection_plan(
             )
 
     if blockers:
-        action = "blocked"
-    elif target is None:
-        action = "import_and_activate"
-    elif (
+        return "blocked", tuple(blockers)
+    if target is None:
+        return "import_and_activate", ()
+    if (
         database.active_release is not None
         and database.active_release.release_tag == rows.release_tag
     ):
-        action = "noop"
-    else:
-        action = "activate_existing"
+        return "noop", ()
+    return "activate_existing", ()
 
+
+def _projection_result(
+    rows: ProjectionRows,
+    database: DatabaseProjectionState,
+    *,
+    action: str,
+    blockers: tuple[ProjectionBlocker, ...],
+    execute: bool,
+    writes_performed: bool,
+) -> dict[str, Any]:
     bootstrap_release = rows.release_tag == "corpus-v0.0.0"
     warnings = (
         [
@@ -323,10 +354,10 @@ def build_projection_plan(
     )
     return {
         "stage": "projection",
-        "status": "blocked" if blockers else "ready",
-        "execute": False,
+        "status": "blocked" if blockers else "success" if execute else "ready",
+        "execute": execute,
         "network_access": True,
-        "writes_performed": False,
+        "writes_performed": writes_performed,
         "transaction_read_only": database.transaction_read_only,
         "release": {
             "tag": rows.release_tag,
@@ -348,12 +379,27 @@ def build_projection_plan(
                 if database.previous_release is not None
                 else None
             ),
-            "target_release": _release_dict(target),
+            "target_release": _release_dict(database.target_release),
         },
         "action": action,
         "blockers": [blocker.as_dict() for blocker in blockers],
         "warnings": warnings,
     }
+
+
+def build_projection_plan(
+    rows: ProjectionRows, database: DatabaseProjectionState
+) -> dict[str, Any]:
+    """Choose the next projection action from validated rows and database state."""
+    action, blockers = _projection_action(rows, database, expected_read_only=True)
+    return _projection_result(
+        rows,
+        database,
+        action=action,
+        blockers=blockers,
+        execute=False,
+        writes_performed=False,
+    )
 
 
 def _database_release(row: dict[str, Any], prefix: str) -> DatabaseRelease | None:
@@ -375,12 +421,63 @@ def _database_release(row: dict[str, Any], prefix: str) -> DatabaseRelease | Non
         ) from exc
 
 
+def _projection_database_state(
+    connection: psycopg.Connection[dict[str, Any]],
+    release_tag: str,
+    *,
+    lock_state: bool = False,
+) -> DatabaseProjectionState:
+    transaction_row = connection.execute("SHOW transaction_read_only").fetchone()
+    version_row = connection.execute("SHOW server_version_num").fetchone()
+    if transaction_row is None or version_row is None:
+        raise PipelineError(
+            "invalid_projection_state",
+            "database did not report transaction or server state",
+        )
+    transaction_read_only = transaction_row["transaction_read_only"] == "on"
+    server_major_version = int(version_row["server_version_num"]) // 10000
+    try:
+        for query in SCHEMA_PROBES:
+            connection.execute(query)
+        if lock_state:
+            state_exists = connection.execute(
+                "SELECT singleton FROM projection_state WHERE singleton FOR UPDATE"
+            ).fetchone()
+            if state_exists is None:
+                return _blocked_database_state(
+                    server_major_version,
+                    transaction_read_only,
+                    "projection_state_missing",
+                    "projection_state singleton row is missing",
+                )
+        state_row = connection.execute(PROJECTION_STATE_QUERY, (release_tag,)).fetchone()
+    except (psycopg.errors.UndefinedColumn, psycopg.errors.UndefinedTable):
+        return _blocked_database_state(
+            server_major_version,
+            transaction_read_only,
+            "projection_schema_unavailable",
+            "required projection tables or columns are missing",
+        )
+    if state_row is None:
+        return _blocked_database_state(
+            server_major_version,
+            transaction_read_only,
+            "projection_state_missing",
+            "projection_state singleton row is missing",
+        )
+    return DatabaseProjectionState(
+        server_major_version=server_major_version,
+        transaction_read_only=transaction_read_only,
+        active_release=_database_release(state_row, "active"),
+        previous_release=_database_release(state_row, "previous"),
+        target_release=_database_release(state_row, "target"),
+    )
+
+
 def inspect_projection_database(
     database_url: str, release_tag: str
 ) -> DatabaseProjectionState:
     """Read one compatible projection-state snapshot without permitting writes."""
-    server_major_version = 0
-    transaction_read_only = False
     try:
         with psycopg.connect(
             database_url,
@@ -389,57 +486,7 @@ def inspect_projection_database(
         ) as connection:
             connection.read_only = True
             with connection.transaction():
-                transaction_row = connection.execute(
-                    "SHOW transaction_read_only"
-                ).fetchone()
-                version_row = connection.execute("SHOW server_version_num").fetchone()
-                if transaction_row is None or version_row is None:
-                    raise PipelineError(
-                        "invalid_projection_state",
-                        "database did not report transaction or server state",
-                    )
-                transaction_read_only = transaction_row["transaction_read_only"] == "on"
-                server_major_version = int(version_row["server_version_num"]) // 10000
-                for query in SCHEMA_PROBES:
-                    connection.execute(query)
-                state_row = connection.execute(
-                    PROJECTION_STATE_QUERY, (release_tag,)
-                ).fetchone()
-                if state_row is None:
-                    return DatabaseProjectionState(
-                        server_major_version=server_major_version,
-                        transaction_read_only=transaction_read_only,
-                        active_release=None,
-                        previous_release=None,
-                        target_release=None,
-                        blockers=(
-                            ProjectionBlocker(
-                                code="projection_state_missing",
-                                message="projection_state singleton row is missing",
-                            ),
-                        ),
-                    )
-                return DatabaseProjectionState(
-                    server_major_version=server_major_version,
-                    transaction_read_only=transaction_read_only,
-                    active_release=_database_release(state_row, "active"),
-                    previous_release=_database_release(state_row, "previous"),
-                    target_release=_database_release(state_row, "target"),
-                )
-    except (psycopg.errors.UndefinedColumn, psycopg.errors.UndefinedTable):
-        return DatabaseProjectionState(
-            server_major_version=server_major_version,
-            transaction_read_only=transaction_read_only,
-            active_release=None,
-            previous_release=None,
-            target_release=None,
-            blockers=(
-                ProjectionBlocker(
-                    code="projection_schema_unavailable",
-                    message="required projection tables or columns are missing",
-                ),
-            ),
-        )
+                return _projection_database_state(connection, release_tag)
     except psycopg.OperationalError as exc:
         raise PipelineError(
             "projection_database_unavailable",
@@ -468,12 +515,193 @@ def preview_projection(
     return build_projection_plan(rows, database)
 
 
+def _insert_projection_records(
+    connection: psycopg.Connection[dict[str, Any]],
+    table: str,
+    release_tag: str,
+    records: tuple[Any, ...],
+) -> None:
+    if not records:
+        return
+    column_names = ("release_tag", *(field.name for field in fields(records[0])))
+    statement = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
+        sql.Identifier(table),
+        sql.SQL(", ").join(map(sql.Identifier, column_names)),
+        sql.SQL(", ").join(sql.Placeholder() for _column in column_names),
+    )
+
+    def values(record: Any) -> tuple[Any, ...]:
+        projected = []
+        for field in fields(record):
+            value = getattr(record, field.name)
+            if field.name == "canonical_record":
+                value = Jsonb(value)
+            elif isinstance(value, tuple):
+                value = list(value)
+            projected.append(value)
+        return (release_tag, *projected)
+
+    with connection.cursor() as cursor:
+        cursor.executemany(statement, (values(record) for record in records))
+
+
+def _import_projection_rows(
+    connection: psycopg.Connection[dict[str, Any]], rows: ProjectionRows
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO corpus_releases (
+            release_tag, commit_sha, canonical_schema_versions,
+            projection_schema_version, import_state
+        ) VALUES (%s, %s, %s, %s, 'importing')
+        """,
+        (
+            rows.release_tag,
+            rows.commit_sha,
+            list(rows.canonical_schema_versions),
+            rows.projection_schema_version,
+        ),
+    )
+    for table, records in (
+        ("sources", rows.sources),
+        ("acts", rows.acts),
+        ("provisions", rows.provisions),
+        ("citations", rows.citations),
+    ):
+        _insert_projection_records(connection, table, rows.release_tag, records)
+    actual = connection.execute(
+        """
+        SELECT
+            (SELECT count(*) FROM acts WHERE release_tag = %s) AS acts,
+            (SELECT count(*) FROM sources WHERE release_tag = %s) AS sources,
+            (SELECT count(*) FROM provisions WHERE release_tag = %s) AS provisions,
+            (SELECT count(*) FROM citations WHERE release_tag = %s) AS citations
+        """,
+        (rows.release_tag,) * 4,
+    ).fetchone()
+    if actual is None or actual != rows.counts:
+        raise PipelineError(
+            "projection_import_failed",
+            "imported row counts do not match the tagged corpus",
+        )
+    connection.execute(
+        """
+        UPDATE corpus_releases SET import_state = 'ready'
+        WHERE release_tag = %s AND import_state = 'importing'
+        """,
+        (rows.release_tag,),
+    )
+
+
+def execute_projection(
+    repo_root: Path,
+    release_tag: str,
+    *,
+    settings: ProjectionSettings | None = None,
+    allow_bootstrap: bool = False,
+) -> dict[str, Any]:
+    """Import and activate one exact tagged release in a single transaction."""
+    rows = build_projection_rows(load_tagged_corpus(repo_root, release_tag))
+    if rows.release_tag == "corpus-v0.0.0" and not allow_bootstrap:
+        raise PipelineError(
+            "bootstrap_release_blocked",
+            "corpus-v0.0.0 execution requires explicit bootstrap approval",
+        )
+    active_settings = settings or ProjectionSettings.from_env()
+    try:
+        with psycopg.connect(
+            active_settings.database_url,
+            autocommit=True,
+            row_factory=dict_row,
+        ) as connection, connection.transaction():
+            read_only = connection.execute("SHOW transaction_read_only").fetchone()
+            if read_only is None or read_only["transaction_read_only"] == "on":
+                raise PipelineError(
+                    "projection_database_read_only",
+                    "projection execution transaction is read-only",
+                )
+            lock = connection.execute(
+                "SELECT pg_try_advisory_xact_lock(%s) AS acquired",
+                (PROJECTION_ADVISORY_LOCK_ID,),
+            ).fetchone()
+            if lock is None or not lock["acquired"]:
+                raise PipelineError(
+                    "projection_busy",
+                    "another projection operation is in progress",
+                    retryable=True,
+                )
+            database = _projection_database_state(
+                connection, rows.release_tag, lock_state=True
+            )
+            action, blockers = _projection_action(rows, database, expected_read_only=False)
+            if blockers:
+                raise PipelineError(blockers[0].code, blockers[0].message)
+            if action == "import_and_activate":
+                _import_projection_rows(connection, rows)
+            if action != "noop":
+                connection.execute(
+                    """
+                    UPDATE projection_state
+                    SET previous_release_tag = active_release_tag,
+                        active_release_tag = %s,
+                        activated_at = CURRENT_TIMESTAMP
+                    WHERE singleton
+                    """,
+                    (rows.release_tag,),
+                )
+            final_database = _projection_database_state(connection, rows.release_tag)
+            return _projection_result(
+                rows,
+                final_database,
+                action=action,
+                blockers=(),
+                execute=True,
+                writes_performed=action != "noop",
+            )
+    except PipelineError:
+        raise
+    except psycopg.OperationalError as exc:
+        raise PipelineError(
+            "projection_database_unavailable",
+            "cannot connect to the projection database",
+            retryable=True,
+        ) from exc
+    except (psycopg.IntegrityError, psycopg.DataError) as exc:
+        raise PipelineError(
+            "projection_import_failed",
+            "database rejected the tagged corpus projection",
+        ) from exc
+    except psycopg.Error as exc:
+        raise PipelineError(
+            "projection_database_error",
+            "cannot execute the corpus projection",
+        ) from exc
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="openacts-projection")
     parser.add_argument("release")
+    parser.add_argument(
+        "--execute", action="store_true", help="import and activate the release"
+    )
+    parser.add_argument(
+        "--allow-bootstrap",
+        action="store_true",
+        help="permit local execution of non-production corpus-v0.0.0",
+    )
     args = parser.parse_args(argv)
+    if args.allow_bootstrap and not args.execute:
+        parser.error("--allow-bootstrap requires --execute")
     try:
-        result = preview_projection(REPO_ROOT, args.release)
+        result = (
+            execute_projection(
+                REPO_ROOT,
+                args.release,
+                allow_bootstrap=args.allow_bootstrap,
+            )
+            if args.execute
+            else preview_projection(REPO_ROOT, args.release)
+        )
     except PipelineError as exc:
         print(
             json.dumps({"status": "failure", "error": exc.as_dict()}),
