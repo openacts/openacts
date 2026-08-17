@@ -1,4 +1,4 @@
-.PHONY: setup ocr-setup ocr-setup-execute test lint check acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute
+.PHONY: setup ocr-setup ocr-setup-execute test lint check acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection
 
 setup:
 	uv sync --project pipeline
@@ -63,3 +63,7 @@ promote:
 promote-execute:
 	@test -n "$(CANDIDATE)" || (echo "CANDIDATE is required" >&2; exit 2)
 	uv run --project pipeline openacts promote "$(CANDIDATE)" --execute
+
+projection:
+	@test -n "$(RELEASE)" || (echo "RELEASE is required" >&2; exit 2)
+	uv run --env-file pipeline/.env --project pipeline openacts-projection "$(RELEASE)"

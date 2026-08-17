@@ -4,6 +4,7 @@ from openacts_pipeline.common import PipelineError
 from openacts_pipeline.config import (
     DEFAULT_DEEPSEEK_BASE_URL,
     DEFAULT_PRIMARY_MODEL,
+    ProjectionSettings,
     StructureSettings,
 )
 
@@ -40,3 +41,18 @@ def test_structure_settings_are_typed_and_fail_loudly() -> None:
             }
         )
     assert invalid_concurrency.value.code == "invalid_configuration"
+
+
+def test_projection_settings_require_and_hide_the_database_url() -> None:
+    database_url = "postgresql://openacts:secret@localhost/openacts"
+    settings = ProjectionSettings.from_env(
+        {"OPENACTS_PROJECTION_DATABASE_URL": f"  {database_url}  "}
+    )
+
+    assert settings.database_url == database_url
+    assert database_url not in repr(settings)
+    assert "secret" not in repr(settings)
+
+    with pytest.raises(PipelineError) as missing:
+        ProjectionSettings.from_env({})
+    assert missing.value.code == "missing_projection_database_url"

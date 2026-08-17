@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
+import json
 import re
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unicodedata
@@ -12,7 +15,11 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import psycopg
+from psycopg.rows import dict_row
+
 from openacts_pipeline.common import PipelineError
+from openacts_pipeline.config import ProjectionSettings
 from openacts_pipeline.corpus import load_corpus
 from openacts_pipeline.corpus_files import CorpusRecords
 
@@ -21,6 +28,69 @@ COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 PROJECTION_SCHEMA_VERSION = 1
 SUPPORTED_CANONICAL_SCHEMA_VERSIONS = {"0.1.0"}
 TEXT_BLOCK_KINDS = {"text", "quoted_text", "formula", "signature"}
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SCHEMA_PROBES = (
+    """
+    SELECT release_tag, commit_sha, canonical_schema_versions,
+           projection_schema_version, import_state, imported_at
+    FROM corpus_releases LIMIT 0
+    """,
+    """
+    SELECT singleton, active_release_tag, previous_release_tag, activated_at
+    FROM projection_state LIMIT 0
+    """,
+    """
+    SELECT release_tag, source_id, schema_version, document_title,
+           document_publisher, language, source_class, canonical_record
+    FROM sources LIMIT 0
+    """,
+    """
+    SELECT release_tag, act_id, schema_version, jurisdiction, country_code,
+           official_title, short_title, year, number, citation, text_kind,
+           status, checked_through_date, title_keys, citation_key, source_ids,
+           searchable_text, search_vector, canonical_record
+    FROM acts LIMIT 0
+    """,
+    """
+    SELECT release_tag, provision_id, act_id, schema_version,
+           parent_provision_id, sibling_order, sequence, depth, node_type,
+           display_label, heading, text_fidelity, reference_key, source_ids,
+           searchable_text, search_vector, canonical_record
+    FROM provisions LIMIT 0
+    """,
+    """
+    SELECT release_tag, citation_id, schema_version, source_provision_id,
+           source_block_id, target_act_id, target_provision_id,
+           canonical_record
+    FROM citations LIMIT 0
+    """,
+)
+PROJECTION_STATE_QUERY = """
+    SELECT
+        state.active_release_tag,
+        state.previous_release_tag,
+        active.commit_sha AS active_commit_sha,
+        active.canonical_schema_versions AS active_canonical_schema_versions,
+        active.projection_schema_version AS active_projection_schema_version,
+        active.import_state AS active_import_state,
+        previous.commit_sha AS previous_commit_sha,
+        previous.canonical_schema_versions AS previous_canonical_schema_versions,
+        previous.projection_schema_version AS previous_projection_schema_version,
+        previous.import_state AS previous_import_state,
+        target.release_tag AS target_release_tag,
+        target.commit_sha AS target_commit_sha,
+        target.canonical_schema_versions AS target_canonical_schema_versions,
+        target.projection_schema_version AS target_projection_schema_version,
+        target.import_state AS target_import_state
+    FROM projection_state AS state
+    LEFT JOIN corpus_releases AS active
+      ON active.release_tag = state.active_release_tag
+    LEFT JOIN corpus_releases AS previous
+      ON previous.release_tag = state.previous_release_tag
+    LEFT JOIN corpus_releases AS target
+      ON target.release_tag = %s
+    WHERE state.singleton
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +187,303 @@ class ProjectionRows:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectionBlocker:
+    code: str
+    message: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {"code": self.code, "message": self.message}
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseRelease:
+    release_tag: str
+    commit_sha: str
+    canonical_schema_versions: tuple[str, ...]
+    projection_schema_version: int
+    import_state: str
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseProjectionState:
+    server_major_version: int
+    transaction_read_only: bool
+    active_release: DatabaseRelease | None
+    previous_release: DatabaseRelease | None
+    target_release: DatabaseRelease | None
+    blockers: tuple[ProjectionBlocker, ...] = ()
+
+
+def _release_dict(release: DatabaseRelease | None) -> dict[str, Any] | None:
+    if release is None:
+        return None
+    return {
+        "tag": release.release_tag,
+        "commit_sha": release.commit_sha,
+        "canonical_schema_versions": list(release.canonical_schema_versions),
+        "projection_schema_version": release.projection_schema_version,
+        "import_state": release.import_state,
+    }
+
+
+def _pointed_release_blockers(
+    role: str, release: DatabaseRelease | None
+) -> list[ProjectionBlocker]:
+    if release is None:
+        return []
+    if (
+        release.import_state != "ready"
+        or release.projection_schema_version != PROJECTION_SCHEMA_VERSION
+        or set(release.canonical_schema_versions) - SUPPORTED_CANONICAL_SCHEMA_VERSIONS
+    ):
+        return [
+            ProjectionBlocker(
+                code=f"{role}_release_invalid",
+                message=f"{role} release metadata is incomplete or unsupported",
+            )
+        ]
+    return []
+
+
+def build_projection_plan(
+    rows: ProjectionRows, database: DatabaseProjectionState
+) -> dict[str, Any]:
+    """Choose the next projection action from validated rows and database state."""
+    blockers = list(database.blockers)
+    if database.server_major_version != 17:
+        blockers.append(
+            ProjectionBlocker(
+                code="unsupported_postgres_version",
+                message="projection tooling is verified against PostgreSQL 17",
+            )
+        )
+    if not database.transaction_read_only:
+        blockers.append(
+            ProjectionBlocker(
+                code="projection_not_read_only",
+                message="database inspection transaction is not read-only",
+            )
+        )
+    blockers.extend(_pointed_release_blockers("active", database.active_release))
+    blockers.extend(_pointed_release_blockers("previous", database.previous_release))
+
+    target = database.target_release
+    if target is not None:
+        if target.commit_sha != rows.commit_sha:
+            blockers.append(
+                ProjectionBlocker(
+                    code="release_commit_conflict",
+                    message="release tag exists with a different commit",
+                )
+            )
+        elif (
+            target.canonical_schema_versions != rows.canonical_schema_versions
+            or target.projection_schema_version != rows.projection_schema_version
+        ):
+            blockers.append(
+                ProjectionBlocker(
+                    code="release_metadata_conflict",
+                    message="stored release schema metadata differs from the tag",
+                )
+            )
+        elif target.import_state != "ready":
+            blockers.append(
+                ProjectionBlocker(
+                    code="release_import_incomplete",
+                    message="stored release import is incomplete",
+                )
+            )
+
+    if blockers:
+        action = "blocked"
+    elif target is None:
+        action = "import_and_activate"
+    elif (
+        database.active_release is not None
+        and database.active_release.release_tag == rows.release_tag
+    ):
+        action = "noop"
+    else:
+        action = "activate_existing"
+
+    bootstrap_release = rows.release_tag == "corpus-v0.0.0"
+    warnings = (
+        [
+            {
+                "code": "bootstrap_release",
+                "message": (
+                    "corpus-v0.0.0 is for release-tooling exercises, not "
+                    "production activation"
+                ),
+            }
+        ]
+        if bootstrap_release
+        else []
+    )
+    return {
+        "stage": "projection",
+        "status": "blocked" if blockers else "ready",
+        "execute": False,
+        "network_access": True,
+        "writes_performed": False,
+        "transaction_read_only": database.transaction_read_only,
+        "release": {
+            "tag": rows.release_tag,
+            "commit_sha": rows.commit_sha,
+            "bootstrap_release": bootstrap_release,
+            "canonical_schema_versions": list(rows.canonical_schema_versions),
+            "projection_schema_version": rows.projection_schema_version,
+            "counts": rows.counts,
+        },
+        "database": {
+            "server_major_version": database.server_major_version,
+            "active_release_tag": (
+                database.active_release.release_tag
+                if database.active_release is not None
+                else None
+            ),
+            "previous_release_tag": (
+                database.previous_release.release_tag
+                if database.previous_release is not None
+                else None
+            ),
+            "target_release": _release_dict(target),
+        },
+        "action": action,
+        "blockers": [blocker.as_dict() for blocker in blockers],
+        "warnings": warnings,
+    }
+
+
+def _database_release(row: dict[str, Any], prefix: str) -> DatabaseRelease | None:
+    release_tag = row[f"{prefix}_release_tag"]
+    if release_tag is None:
+        return None
+    try:
+        return DatabaseRelease(
+            release_tag=release_tag,
+            commit_sha=row[f"{prefix}_commit_sha"],
+            canonical_schema_versions=tuple(row[f"{prefix}_canonical_schema_versions"]),
+            projection_schema_version=row[f"{prefix}_projection_schema_version"],
+            import_state=row[f"{prefix}_import_state"],
+        )
+    except (KeyError, TypeError) as exc:
+        raise PipelineError(
+            "invalid_projection_state",
+            f"{prefix} release metadata is invalid",
+        ) from exc
+
+
+def inspect_projection_database(
+    database_url: str, release_tag: str
+) -> DatabaseProjectionState:
+    """Read one compatible projection-state snapshot without permitting writes."""
+    server_major_version = 0
+    transaction_read_only = False
+    try:
+        with psycopg.connect(
+            database_url,
+            autocommit=True,
+            row_factory=dict_row,
+        ) as connection:
+            connection.read_only = True
+            with connection.transaction():
+                transaction_row = connection.execute(
+                    "SHOW transaction_read_only"
+                ).fetchone()
+                version_row = connection.execute("SHOW server_version_num").fetchone()
+                if transaction_row is None or version_row is None:
+                    raise PipelineError(
+                        "invalid_projection_state",
+                        "database did not report transaction or server state",
+                    )
+                transaction_read_only = transaction_row["transaction_read_only"] == "on"
+                server_major_version = int(version_row["server_version_num"]) // 10000
+                for query in SCHEMA_PROBES:
+                    connection.execute(query)
+                state_row = connection.execute(
+                    PROJECTION_STATE_QUERY, (release_tag,)
+                ).fetchone()
+                if state_row is None:
+                    return DatabaseProjectionState(
+                        server_major_version=server_major_version,
+                        transaction_read_only=transaction_read_only,
+                        active_release=None,
+                        previous_release=None,
+                        target_release=None,
+                        blockers=(
+                            ProjectionBlocker(
+                                code="projection_state_missing",
+                                message="projection_state singleton row is missing",
+                            ),
+                        ),
+                    )
+                return DatabaseProjectionState(
+                    server_major_version=server_major_version,
+                    transaction_read_only=transaction_read_only,
+                    active_release=_database_release(state_row, "active"),
+                    previous_release=_database_release(state_row, "previous"),
+                    target_release=_database_release(state_row, "target"),
+                )
+    except (psycopg.errors.UndefinedColumn, psycopg.errors.UndefinedTable):
+        return DatabaseProjectionState(
+            server_major_version=server_major_version,
+            transaction_read_only=transaction_read_only,
+            active_release=None,
+            previous_release=None,
+            target_release=None,
+            blockers=(
+                ProjectionBlocker(
+                    code="projection_schema_unavailable",
+                    message="required projection tables or columns are missing",
+                ),
+            ),
+        )
+    except psycopg.OperationalError as exc:
+        raise PipelineError(
+            "projection_database_unavailable",
+            "cannot connect to the projection database",
+            retryable=True,
+        ) from exc
+    except psycopg.Error as exc:
+        raise PipelineError(
+            "projection_database_error",
+            "cannot inspect the projection database",
+        ) from exc
+
+
+def preview_projection(
+    repo_root: Path,
+    release_tag: str,
+    *,
+    settings: ProjectionSettings | None = None,
+) -> dict[str, Any]:
+    """Validate a tagged release and report its non-writing database action."""
+    rows = build_projection_rows(load_tagged_corpus(repo_root, release_tag))
+    active_settings = settings or ProjectionSettings.from_env()
+    database = inspect_projection_database(
+        active_settings.database_url, rows.release_tag
+    )
+    return build_projection_plan(rows, database)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="openacts-projection")
+    parser.add_argument("release")
+    args = parser.parse_args(argv)
+    try:
+        result = preview_projection(REPO_ROOT, args.release)
+    except PipelineError as exc:
+        print(
+            json.dumps({"status": "failure", "error": exc.as_dict()}),
+            file=sys.stderr,
+        )
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _git(repo_root: Path, *arguments: str, code: str) -> str:
     try:
         completed = subprocess.run(
@@ -136,9 +503,7 @@ def _git(repo_root: Path, *arguments: str, code: str) -> str:
 def load_tagged_corpus(repo_root: Path, release_tag: str) -> TaggedCorpus:
     """Load corpus data and schemas from the commit behind an exact local tag."""
     if RELEASE_TAG_PATTERN.fullmatch(release_tag) is None:
-        raise PipelineError(
-            "invalid_release_tag", "release must match corpus-vX.Y.Z"
-        )
+        raise PipelineError("invalid_release_tag", "release must match corpus-vX.Y.Z")
     commit_sha = _git(
         repo_root,
         "rev-parse",
@@ -172,9 +537,7 @@ def load_tagged_corpus(repo_root: Path, release_tag: str) -> TaggedCorpus:
             raise PipelineError(
                 "release_archive_failed", f"cannot extract release: {exc}"
             ) from exc
-        records = load_corpus(
-            temporary / "corpus", schema_dir=temporary / "schemas"
-        )
+        records = load_corpus(temporary / "corpus", schema_dir=temporary / "schemas")
     return TaggedCorpus(
         release_tag=release_tag,
         commit_sha=commit_sha,
@@ -267,7 +630,12 @@ def _source_rows(records: CorpusRecords) -> tuple[SourceRow, ...]:
 
 def _act_row(act: dict[str, Any]) -> ActRow:
     titles = act["titles"]
-    title_values = [titles["official"], titles["short"], titles["long"], *act["aliases"]]
+    title_values = [
+        titles["official"],
+        titles["short"],
+        titles["long"],
+        *act["aliases"],
+    ]
     return ActRow(
         act_id=act["act_id"],
         schema_version=act["schema_version"],
@@ -397,3 +765,7 @@ def build_projection_rows(tagged: TaggedCorpus) -> ProjectionRows:
         provisions=provisions,
         citations=_citation_rows(tagged.records),
     )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

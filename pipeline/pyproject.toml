@@ -11,12 +11,14 @@ requires-python = ">=3.12"
 dependencies = [
   "jsonschema>=4.23",
   "pydantic-ai-slim[openai]>=2,<3",
+  "psycopg[binary]>=3.3,<4",
   "pypdf>=6.0",
   "referencing>=0.36",
 ]
 
 [project.scripts]
 openacts = "openacts_pipeline.acquire:main"
+openacts-projection = "openacts_pipeline.projection:main"
 
 [dependency-groups]
 dev = [

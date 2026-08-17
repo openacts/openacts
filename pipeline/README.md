@@ -11,6 +11,29 @@ From the repository root:
 make setup
 ```
 
+## Preview a corpus projection
+
+Set the projection database URL in the gitignored `pipeline/.env`:
+
+```text
+OPENACTS_PROJECTION_DATABASE_URL=postgresql://<role>:<password>@<host>/<database>
+```
+
+After applying `api/sql/001_projection.sql` to that database, preview an exact
+tagged corpus release:
+
+```sh
+make projection RELEASE=corpus-v0.0.0
+```
+
+The command validates the corpus and schemas from the tag's exact commit, builds
+the deterministic projection rows, and inspects PostgreSQL inside a read-only
+transaction. It reports `import_and_activate`, `activate_existing`, `noop`, or
+`blocked`, along with release counts, database pointers, warnings, and blockers.
+It does not import records, activate a release, edit the corpus, or persist an
+artifact. `corpus-v0.0.0` is a bootstrap release for exercising this tooling;
+it is not eligible for production activation.
+
 ## Acquire a source
 
 Create a local request such as `source-cache/requests/ndpa.json`:

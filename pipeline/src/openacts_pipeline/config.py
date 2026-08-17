@@ -1,8 +1,8 @@
-"""Typed configuration for model-backed pipeline stages."""
+"""Typed configuration for pipeline stages."""
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from openacts_pipeline.common import PipelineError
 
@@ -12,6 +12,24 @@ DEFAULT_STRUCTURE_TIMEOUT_SECONDS = 300
 DEFAULT_STRUCTURE_CONCURRENCY = 4
 DEFAULT_STRUCTURE_MAX_REPAIR_ROUNDS = 3
 DEFAULT_STRUCTURE_MAX_TOTAL_TOKENS = 2_000_000
+
+
+@dataclass(frozen=True)
+class ProjectionSettings:
+    database_url: str = field(repr=False)
+
+    @classmethod
+    def from_env(
+        cls, environment: Mapping[str, str] | None = None
+    ) -> "ProjectionSettings":
+        values = os.environ if environment is None else environment
+        database_url = values.get("OPENACTS_PROJECTION_DATABASE_URL", "").strip()
+        if not database_url:
+            raise PipelineError(
+                "missing_projection_database_url",
+                "OPENACTS_PROJECTION_DATABASE_URL is required",
+            )
+        return cls(database_url=database_url)
 
 
 @dataclass(frozen=True)

@@ -1,13 +1,25 @@
 import copy
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
+import psycopg
 import pytest
 
+import openacts_pipeline.projection as projection_module
 from openacts_pipeline.common import PipelineError
-from openacts_pipeline.projection import build_projection_rows, load_tagged_corpus
+from openacts_pipeline.config import ProjectionSettings
+from openacts_pipeline.projection import (
+    DatabaseProjectionState,
+    DatabaseRelease,
+    ProjectionBlocker,
+    build_projection_plan,
+    build_projection_rows,
+    load_tagged_corpus,
+    preview_projection,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests/fixtures/valid"
@@ -155,3 +167,233 @@ def test_tagged_projection_blocks_bad_tags_and_invalid_tagged_data(
     with pytest.raises(PipelineError) as invalid:
         load_tagged_corpus(repo, "corpus-v0.0.1")
     assert invalid.value.code == "invalid_corpus_record"
+
+
+def test_projection_plan_reports_import_activate_and_noop(tmp_path: Path) -> None:
+    repo, _act_dir = _release_repo(tmp_path)
+    rows = build_projection_rows(load_tagged_corpus(repo, "corpus-v0.0.0"))
+    empty = DatabaseProjectionState(
+        server_major_version=17,
+        transaction_read_only=True,
+        active_release=None,
+        previous_release=None,
+        target_release=None,
+    )
+
+    import_plan = build_projection_plan(rows, empty)
+    assert import_plan["status"] == "ready"
+    assert import_plan["action"] == "import_and_activate"
+    assert import_plan["writes_performed"] is False
+    assert import_plan["transaction_read_only"] is True
+    assert import_plan["release"]["bootstrap_release"] is True
+    assert import_plan["warnings"][0]["code"] == "bootstrap_release"
+
+    ready = DatabaseRelease(
+        release_tag=rows.release_tag,
+        commit_sha=rows.commit_sha,
+        canonical_schema_versions=rows.canonical_schema_versions,
+        projection_schema_version=rows.projection_schema_version,
+        import_state="ready",
+    )
+    inactive = DatabaseProjectionState(
+        server_major_version=17,
+        transaction_read_only=True,
+        active_release=None,
+        previous_release=None,
+        target_release=ready,
+    )
+    assert build_projection_plan(rows, inactive)["action"] == "activate_existing"
+
+    active = DatabaseProjectionState(
+        server_major_version=17,
+        transaction_read_only=True,
+        active_release=ready,
+        previous_release=None,
+        target_release=ready,
+    )
+    assert build_projection_plan(rows, active)["action"] == "noop"
+
+
+@pytest.mark.parametrize(
+    ("changed_field", "changed_value", "blocker_code"),
+    [
+        ("commit_sha", "f" * 40, "release_commit_conflict"),
+        (
+            "canonical_schema_versions",
+            ("0.2.0",),
+            "release_metadata_conflict",
+        ),
+        ("projection_schema_version", 2, "release_metadata_conflict"),
+        ("import_state", "importing", "release_import_incomplete"),
+    ],
+)
+def test_projection_plan_blocks_conflicting_or_incomplete_releases(
+    tmp_path: Path,
+    changed_field: str,
+    changed_value: object,
+    blocker_code: str,
+) -> None:
+    repo, _act_dir = _release_repo(tmp_path)
+    rows = build_projection_rows(load_tagged_corpus(repo, "corpus-v0.0.0"))
+    values = {
+        "release_tag": rows.release_tag,
+        "commit_sha": rows.commit_sha,
+        "canonical_schema_versions": rows.canonical_schema_versions,
+        "projection_schema_version": rows.projection_schema_version,
+        "import_state": "ready",
+    }
+    values[changed_field] = changed_value
+    target = DatabaseRelease(**values)
+    state = DatabaseProjectionState(
+        server_major_version=17,
+        transaction_read_only=True,
+        active_release=None,
+        previous_release=None,
+        target_release=target,
+    )
+
+    result = build_projection_plan(rows, state)
+
+    assert result["status"] == "blocked"
+    assert result["action"] == "blocked"
+    assert [blocker["code"] for blocker in result["blockers"]] == [blocker_code]
+
+
+def test_projection_plan_preserves_database_blockers(tmp_path: Path) -> None:
+    repo, _act_dir = _release_repo(tmp_path)
+    rows = build_projection_rows(load_tagged_corpus(repo, "corpus-v0.0.0"))
+    state = DatabaseProjectionState(
+        server_major_version=17,
+        transaction_read_only=True,
+        active_release=None,
+        previous_release=None,
+        target_release=None,
+        blockers=(
+            ProjectionBlocker(
+                code="projection_schema_unavailable",
+                message="required projection tables or columns are missing",
+            ),
+        ),
+    )
+
+    result = build_projection_plan(rows, state)
+
+    assert result["status"] == "blocked"
+    assert result["action"] == "blocked"
+    assert result["blockers"] == [
+        {
+            "code": "projection_schema_unavailable",
+            "message": "required projection tables or columns are missing",
+        }
+    ]
+
+
+def test_projection_plan_blocks_unsafe_database_state(tmp_path: Path) -> None:
+    repo, _act_dir = _release_repo(tmp_path)
+    rows = build_projection_rows(load_tagged_corpus(repo, "corpus-v0.0.0"))
+    incomplete = DatabaseRelease(
+        release_tag="corpus-v0.0.9",
+        commit_sha="e" * 40,
+        canonical_schema_versions=("0.1.0",),
+        projection_schema_version=1,
+        import_state="importing",
+    )
+    cases = (
+        (
+            DatabaseProjectionState(16, True, None, None, None),
+            "unsupported_postgres_version",
+        ),
+        (
+            DatabaseProjectionState(17, False, None, None, None),
+            "projection_not_read_only",
+        ),
+        (
+            DatabaseProjectionState(17, True, incomplete, None, None),
+            "active_release_invalid",
+        ),
+        (
+            DatabaseProjectionState(17, True, None, incomplete, None),
+            "previous_release_invalid",
+        ),
+    )
+
+    for state, blocker_code in cases:
+        result = build_projection_plan(rows, state)
+        assert result["action"] == "blocked"
+        assert [blocker["code"] for blocker in result["blockers"]] == [blocker_code]
+
+
+def test_projection_has_its_own_cli_entrypoint(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    called: dict[str, object] = {}
+
+    def preview(repo_root: object, release: str) -> dict[str, object]:
+        called.update(repo_root=repo_root, release=release)
+        return {"status": "ready", "action": "noop"}
+
+    monkeypatch.setattr(projection_module, "preview_projection", preview)
+
+    assert projection_module.main(["corpus-v0.0.0"]) == 0
+    assert called == {
+        "repo_root": projection_module.REPO_ROOT,
+        "release": "corpus-v0.0.0",
+    }
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "ready",
+        "action": "noop",
+    }
+
+
+def _database_snapshot(database_url: str) -> dict[str, object]:
+    with psycopg.connect(database_url) as connection:
+        return {
+            "releases": connection.execute(
+                """
+                SELECT release_tag, commit_sha, canonical_schema_versions,
+                       projection_schema_version, import_state, imported_at
+                FROM corpus_releases ORDER BY release_tag
+                """
+            ).fetchall(),
+            "state": connection.execute(
+                """
+                SELECT singleton, active_release_tag, previous_release_tag,
+                       activated_at
+                FROM projection_state ORDER BY singleton
+                """
+            ).fetchall(),
+            "counts": connection.execute(
+                """
+                SELECT (SELECT count(*) FROM sources),
+                       (SELECT count(*) FROM acts),
+                       (SELECT count(*) FROM provisions),
+                       (SELECT count(*) FROM citations)
+                """
+            ).fetchone(),
+        }
+
+
+def test_projection_preview_is_read_only_on_postgres_17() -> None:
+    database_url = os.environ.get("OPENACTS_TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("OPENACTS_TEST_DATABASE_URL is not configured")
+    before = _database_snapshot(database_url)
+
+    result = preview_projection(
+        ROOT,
+        "corpus-v0.0.0",
+        settings=ProjectionSettings(database_url=database_url),
+    )
+
+    assert result["status"] == "ready"
+    assert result["action"] == "import_and_activate"
+    assert result["transaction_read_only"] is True
+    assert result["writes_performed"] is False
+    assert result["release"]["counts"] == {
+        "acts": 2,
+        "sources": 2,
+        "provisions": 3134,
+        "citations": 0,
+    }
+    assert _database_snapshot(database_url) == before
