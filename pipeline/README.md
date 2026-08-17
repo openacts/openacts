@@ -11,7 +11,7 @@ From the repository root:
 make setup
 ```
 
-## Preview a corpus projection
+## Project a corpus release
 
 Set the projection database URL in the gitignored `pipeline/.env`:
 
@@ -33,6 +33,25 @@ transaction. It reports `import_and_activate`, `activate_existing`, `noop`, or
 It does not import records, activate a release, edit the corpus, or persist an
 artifact. `corpus-v0.0.0` is a bootstrap release for exercising this tooling;
 it is not eligible for production activation.
+
+After reviewing a ready preview, explicitly import and activate the release:
+
+```sh
+make projection-execute RELEASE=corpus-v0.1.0
+```
+
+Execution revalidates the exact tag, then imports and activates inside one
+PostgreSQL transaction protected by an advisory lock. A failed import leaves
+the current active release unchanged. Repeating an active release is a `noop`;
+executing an already imported previous release reactivates it for rollback.
+Projection never edits the canonical corpus.
+
+The bootstrap release is blocked by default. It may be activated only for a
+local tooling exercise with an additional explicit override:
+
+```sh
+make projection-execute RELEASE=corpus-v0.0.0 ALLOW_BOOTSTRAP=1
+```
 
 ## Acquire a source
 

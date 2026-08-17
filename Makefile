@@ -1,4 +1,4 @@
-.PHONY: setup ocr-setup ocr-setup-execute test lint check acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection
+.PHONY: setup ocr-setup ocr-setup-execute test lint check acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection projection-execute
 
 setup:
 	uv sync --project pipeline
@@ -67,3 +67,7 @@ promote-execute:
 projection:
 	@test -n "$(RELEASE)" || (echo "RELEASE is required" >&2; exit 2)
 	uv run --env-file pipeline/.env --project pipeline openacts-projection "$(RELEASE)"
+
+projection-execute:
+	@test -n "$(RELEASE)" || (echo "RELEASE is required" >&2; exit 2)
+	uv run --env-file pipeline/.env --project pipeline openacts-projection "$(RELEASE)" --execute $(if $(filter 1,$(ALLOW_BOOTSTRAP)),--allow-bootstrap)
