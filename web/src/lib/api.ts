@@ -1,6 +1,11 @@
 import { unstable_rethrow } from "next/navigation";
 
 import type { ApiErrorResponse, ApiResponse } from "./contracts";
+import type {
+  ActContentsData,
+  ActDetail,
+  ActSummaryListData,
+} from "./contracts";
 
 export class OpenActsApiError extends Error {
   constructor(
@@ -120,4 +125,19 @@ export function apiPath(path: string, params?: Record<string, string | number>):
 
 export function encodePathSegment(value: string): string {
   return encodeURIComponent(value);
+}
+
+export async function fetchActs(offset = 0, limit = 50) {
+  const path = apiPath("/v1/acts", { offset, limit });
+  return apiRequest<ActSummaryListData>(path);
+}
+
+export async function fetchActDetail(actId: string) {
+  const encoded = encodePathSegment(actId);
+  return apiRequest<ActDetail>(`/v1/acts/${encoded}`);
+}
+
+export async function fetchActContents(actId: string) {
+  const encoded = encodePathSegment(actId);
+  return apiRequest<ActContentsData>(`/v1/acts/${encoded}/contents`);
 }
