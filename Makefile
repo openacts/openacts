@@ -1,7 +1,9 @@
-.PHONY: setup ocr-setup ocr-setup-execute test lint check api-check api-run acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection projection-execute
+.PHONY: setup dev ocr-setup ocr-setup-execute test lint check api-check api-run acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection projection-execute
 
 setup:
 	uv sync --project pipeline
+
+dev: api-run
 
 ocr-setup:
 	uv run --project pipeline openacts ocr-setup
