@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function Home() {
   return (
     <main id="main-content">
@@ -17,9 +19,15 @@ export default function Home() {
         <aside className="border-l-2 border-action pl-6 lg:mb-2">
           <p className="text-sm font-semibold text-ink">Reader foundation</p>
           <p className="mt-2 max-w-sm text-sm leading-6 text-muted">
-            Act browsing, the Provision reader, and private exact-reference
-            search are the next implementation slices.
+            Act browsing and private exact-reference search are the next
+            implementation slice.
           </p>
+          <Link
+            href="/acts"
+            className="mt-4 inline-block border-b border-b-action pb-1 text-sm font-semibold text-action"
+          >
+            Open Act index →
+          </Link>
         </aside>
       </section>
     </main>
