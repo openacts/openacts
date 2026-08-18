@@ -1,9 +1,27 @@
-.PHONY: setup dev ocr-setup ocr-setup-execute test lint check api-check api-run acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection projection-execute
+.PHONY: setup dev db-up db-down ocr-setup ocr-setup-execute test lint check api-check api-run integration-test acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection projection-execute
+
+-include .env
+
+OPENACTS_PROJECTION_DATABASE_URL ?= postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@127.0.0.1:$(OPENACTS_POSTGRES_PORT)/$(POSTGRES_DB)
+OPENACTS_API_DATABASE_URL ?= postgresql://$(OPENACTS_API_USER):$(OPENACTS_API_PASSWORD)@127.0.0.1:$(OPENACTS_POSTGRES_PORT)/$(POSTGRES_DB)
+OPENACTS_TEST_DATABASE_URL ?= postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@127.0.0.1:$(OPENACTS_POSTGRES_PORT)/$(OPENACTS_TEST_DATABASE)
+OPENACTS_API_TEST_DATABASE_URL ?= postgresql://$(OPENACTS_API_USER):$(OPENACTS_API_PASSWORD)@127.0.0.1:$(OPENACTS_POSTGRES_PORT)/$(OPENACTS_TEST_DATABASE)
+COMPOSE = docker compose --project-name openacts --file compose.yaml
+
+.env:
+	@echo ".env is required; copy .env.example" >&2
+	@exit 2
 
 setup:
 	uv sync --project pipeline
 
-dev: api-run
+dev: db-up api-run
+
+db-up: .env
+	$(COMPOSE) up -d --wait postgres
+
+db-down:
+	$(COMPOSE) down
 
 ocr-setup:
 	uv run --project pipeline openacts ocr-setup
@@ -23,9 +41,13 @@ api-check:
 	uv run --project api ruff check api/src api/tests
 	uv run --project api pytest api/tests
 
-api-run:
-	@test -f api/.env || (echo "api/.env is required; copy api/.env.example" >&2; exit 2)
-	OPENACTS_APPLICATION_REVISION="$$(git rev-parse HEAD)" uv run --env-file api/.env --project api uvicorn openacts_api.app:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
+api-run: .env
+	OPENACTS_API_DATABASE_URL="$(OPENACTS_API_DATABASE_URL)" OPENACTS_APPLICATION_REVISION="$$(git rev-parse HEAD)" uv run --env-file .env --project api uvicorn openacts_api.app:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
+
+integration-test: db-up
+	OPENACTS_TEST_DATABASE_URL="$(OPENACTS_TEST_DATABASE_URL)" uv run --project pipeline pytest pipeline/tests/test_projection.py
+	OPENACTS_PROJECTION_DATABASE_URL="$(OPENACTS_TEST_DATABASE_URL)" uv run --env-file .env --project pipeline openacts-projection corpus-v0.0.0 --execute --allow-bootstrap
+	OPENACTS_API_TEST_DATABASE_URL="$(OPENACTS_API_TEST_DATABASE_URL)" uv run --env-file .env --project api pytest api/tests/test_database.py
 
 acquire:
 	@test -n "$(REQUEST)" || (echo "REQUEST is required" >&2; exit 2)
@@ -76,8 +98,8 @@ promote-execute:
 
 projection:
 	@test -n "$(RELEASE)" || (echo "RELEASE is required" >&2; exit 2)
-	uv run --env-file pipeline/.env --project pipeline openacts-projection "$(RELEASE)"
+	OPENACTS_PROJECTION_DATABASE_URL="$(OPENACTS_PROJECTION_DATABASE_URL)" uv run --env-file .env --project pipeline openacts-projection "$(RELEASE)"
 
 projection-execute:
 	@test -n "$(RELEASE)" || (echo "RELEASE is required" >&2; exit 2)
-	uv run --env-file pipeline/.env --project pipeline openacts-projection "$(RELEASE)" --execute $(if $(filter 1,$(ALLOW_BOOTSTRAP)),--allow-bootstrap)
+	OPENACTS_PROJECTION_DATABASE_URL="$(OPENACTS_PROJECTION_DATABASE_URL)" uv run --env-file .env --project pipeline openacts-projection "$(RELEASE)" --execute $(if $(filter 1,$(ALLOW_BOOTSTRAP)),--allow-bootstrap)
