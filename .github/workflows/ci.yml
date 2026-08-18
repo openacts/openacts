@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"
+
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.9.9"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: |
+            pipeline/uv.lock
+            api/uv.lock
+      - run: make check
+
+  postgres-integration:
+    name: postgres-integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.9.9"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: |
+            pipeline/uv.lock
+            api/uv.lock
+      - name: Create CI environment
+        run: |
+          cp .env.example .env
+          projection_password="$(openssl rand -hex 24)"
+          api_password="$(openssl rand -hex 24)"
+          sed -i "s/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=${projection_password}/" .env
+          sed -i "s/^OPENACTS_API_PASSWORD=$/OPENACTS_API_PASSWORD=${api_password}/" .env
+      - run: make --silent integration-test
+      - name: Show PostgreSQL logs
+        if: failure()
+        run: docker compose --project-name openacts --file compose.yaml logs --no-color postgres
