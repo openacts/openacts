@@ -71,9 +71,7 @@ export async function apiRequest<T>(
       headers,
     });
   } catch (cause) {
-    // Next signals control flow (notFound, redirect, dynamic-rendering bailout)
-    // by throwing internal errors through fetch. Wrapping those as a network
-    // failure would break the framework, so hand them straight back.
+    // Next throws notFound/redirect/dynamic-bailout through fetch.
     unstable_rethrow(cause);
     throw new OpenActsApiError(
       0,
