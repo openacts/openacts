@@ -28,17 +28,14 @@ export default async function ActDetailPage({
   try {
     detail = await fetchActDetail(actId);
   } catch (error) {
-    // A 4xx means this Act is not addressable, which is a real 404. Anything
-    // else is our failure, so it propagates and the response carries a 500
-    // rather than a 200 that would let crawlers index an outage as content.
+    // 4xx means not addressable, so a real 404. Anything else propagates as 500.
     if (error instanceof OpenActsApiError && error.status >= 400 && error.status < 500) {
       notFound();
     }
     throw error;
   }
 
-  // Contents are secondary: losing them should not take down Act metadata we
-  // already hold, so this one failure degrades to an explanatory panel.
+  // Contents are secondary: their failure must not hide Act metadata.
   let contents: ApiResponse<ActContentsData> | null = null;
   try {
     contents = await fetchActContents(actId);

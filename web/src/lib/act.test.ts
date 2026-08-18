@@ -30,8 +30,6 @@ function actRecord(overrides: Partial<ActRecord> = {}): ActRecord {
 }
 
 describe("actTextKind", () => {
-  // The projection stores text_kind NOT NULL via COALESCE(..., 'as_enacted'),
-  // so an omitted value must not be reported as unknown.
   it("defaults an omitted text_kind to as_enacted", () => {
     expect(actTextKind(actRecord())).toBe("as_enacted");
   });

@@ -4,11 +4,6 @@ import Link from "next/link";
 
 import { useEffect } from "react";
 
-/**
- * Renders the UI for a failed server render. The response already carries a
- * 500, so this is presentation only: never soften it into something that reads
- * as a successful, empty result.
- */
 export default function Error({
   error,
   reset,

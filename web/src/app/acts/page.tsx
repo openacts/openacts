@@ -3,8 +3,7 @@ import Link from "next/link";
 import { textKindLabel } from "@/lib/act";
 import { fetchActs } from "@/lib/api";
 
-// Dates stay in the API's ISO form: server-locale formatting would render
-// differently per deployment, and currentness boundaries must be unambiguous.
+// ISO, not toLocaleDateString: server locale varies per deployment.
 function formatDate(value: string | null): string {
   return value ?? "date not established";
 }
@@ -34,9 +33,7 @@ function StatusBadges({
 }
 
 export default async function ActsPage() {
-  // Deliberately uncaught. A failure here means the corpus is unreadable, and
-  // rendering an apology with a 200 would tell crawlers and uptime checks the
-  // page is healthy. Letting it throw yields a 500 and error.tsx renders the UI.
+  // Deliberately uncaught: catching here would serve an outage as HTTP 200.
   const response = await fetchActs(0, 50);
   const { items, pagination } = response.data;
 

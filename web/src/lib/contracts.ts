@@ -27,11 +27,8 @@ export interface ActSummaryListData {
   pagination: Pagination;
 }
 
-/**
- * `GET /v1/acts/{id}` returns the canonical act record verbatim, not the flat
- * `ActSummary` shape used by the list endpoint. Titles are nested and there is
- * no `official_title` key. See `schemas/act.schema.json`.
- */
+// The detail endpoint returns the canonical record, not ActSummary: titles are
+// nested and there is no official_title. See schemas/act.schema.json.
 export interface ActRecord {
   act_id: string;
   jurisdiction: string;
