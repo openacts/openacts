@@ -2,10 +2,11 @@
 
 from datetime import date
 from hashlib import sha256
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
+from unicodedata import normalize
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from openacts_api.config import Settings
 from openacts_api.database import ActiveRelease, ProjectionReader
@@ -16,10 +17,16 @@ CORPUS_RELEASE_HEADER = "OpenActs-Corpus-Release"
 NO_STORE = "no-store"
 REVALIDATE = "public, max-age=0, must-revalidate"
 ACT_ID_PATTERN = r"^[a-z]{2}(?:-[a-z0-9]+)+-[0-9]{4}-[a-z0-9][a-z0-9-]*$"
+PROVISION_ID_PATTERN = (
+    r"^[a-z]{2}(?:-[a-z0-9]+)+-[0-9]{4}-[a-z0-9][a-z0-9-]*:"
+    r"[a-z0-9][a-z0-9.-]*(?:~[0-9]+)?$"
+)
 SOURCE_ID_PATTERN = r"^sha256:[0-9a-f]{64}$"
 
 ActId = Annotated[str, Path(pattern=ACT_ID_PATTERN)]
+ProvisionId = Annotated[str, Path(pattern=PROVISION_ID_PATTERN)]
 SourceId = Annotated[str, Path(pattern=SOURCE_ID_PATTERN)]
+SearchActId = Annotated[str, Field(pattern=ACT_ID_PATTERN)]
 Offset = Annotated[int, Query(ge=0)]
 Limit = Annotated[int, Query(ge=1, le=100)]
 
@@ -91,6 +98,66 @@ class ActDetailResponse(BaseModel):
     data: ActDetailData
 
 
+class ProvisionOutline(BaseModel):
+    provision_id: str
+    parent_provision_id: str | None
+    node_type: str
+    display_label: str | None
+    heading: str | None
+    order: int
+    sequence: int
+    depth: int
+    has_content: bool
+    has_children: bool
+
+
+class ActContentsData(BaseModel):
+    items: list[ProvisionOutline]
+
+
+class ActContentsResponse(BaseModel):
+    meta: ApiMeta
+    data: ActContentsData
+
+
+class ProvisionSummary(BaseModel):
+    provision_id: str
+    act_id: str
+    node_type: str
+    display_label: str | None
+    heading: str | None
+
+
+class ProvisionNavigation(BaseModel):
+    previous: ProvisionSummary | None
+    next: ProvisionSummary | None
+
+
+class CitationTarget(BaseModel):
+    act: ActSummary
+    provision: ProvisionSummary | None
+
+
+class ProvisionCitation(BaseModel):
+    citation: dict[str, Any]
+    target: CitationTarget
+
+
+class ProvisionDetailData(BaseModel):
+    act: ActSummary
+    provision: dict[str, Any]
+    descendants: list[dict[str, Any]]
+    ancestors: list[ProvisionSummary]
+    navigation: ProvisionNavigation
+    sources: list[dict[str, Any]]
+    citations: list[ProvisionCitation]
+
+
+class ProvisionDetailResponse(BaseModel):
+    meta: ApiMeta
+    data: ProvisionDetailData
+
+
 class SourceData(BaseModel):
     source: dict[str, Any]
 
@@ -98,6 +165,48 @@ class SourceData(BaseModel):
 class SourceResponse(BaseModel):
     meta: ApiMeta
     data: SourceData
+
+
+class SearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str
+    act_id: SearchActId | None = None
+    limit: int = Field(default=20, ge=1, le=50)
+
+    @field_validator("query")
+    @classmethod
+    def normalize_query(cls, value: str) -> str:
+        query = normalize("NFC", value).strip()
+        if not 1 <= len(query) <= 256:
+            raise ValueError("query must contain from 1 through 256 code points")
+        return query
+
+
+class SearchItem(BaseModel):
+    kind: Literal["act", "provision"]
+    match_kind: Literal[
+        "exact_act_id",
+        "exact_provision_id",
+        "exact_act_citation",
+        "exact_act_title",
+        "exact_act_alias",
+        "exact_provision_reference",
+        "lexical",
+    ]
+    act: ActSummary
+    provision: ProvisionSummary | None
+    breadcrumb: list[ProvisionSummary]
+    excerpt: str | None = Field(max_length=320)
+
+
+class SearchData(BaseModel):
+    items: list[SearchItem]
+
+
+class SearchResponse(BaseModel):
+    meta: ApiMeta
+    data: SearchData
 
 
 class ApiError(Exception):
@@ -250,6 +359,58 @@ def act_detail(
     )
 
 
+@router.get("/v1/acts/{act_id}/contents", response_model=ActContentsResponse)
+def act_contents(
+    request: Request,
+    act_id: ActId,
+    settings: SettingsDependency,
+    database: DatabaseDependency,
+    release: ReleaseDependency,
+) -> Response:
+    rows = database.get_act_contents(release.release_tag, act_id)
+    if rows is None:
+        raise ApiError(
+            404,
+            "act_not_found",
+            "Act not found.",
+            retryable=False,
+        )
+    return corpus_response(
+        request,
+        ActContentsResponse(
+            meta=api_meta(settings, release),
+            data=ActContentsData(
+                items=[ProvisionOutline.model_validate(row) for row in rows]
+            ),
+        ),
+    )
+
+
+@router.get("/v1/provisions/{provision_id}", response_model=ProvisionDetailResponse)
+def provision_detail(
+    request: Request,
+    provision_id: ProvisionId,
+    settings: SettingsDependency,
+    database: DatabaseDependency,
+    release: ReleaseDependency,
+) -> Response:
+    result = database.get_provision(release.release_tag, provision_id)
+    if result is None:
+        raise ApiError(
+            404,
+            "provision_not_found",
+            "Provision not found.",
+            retryable=False,
+        )
+    return corpus_response(
+        request,
+        ProvisionDetailResponse(
+            meta=api_meta(settings, release),
+            data=ProvisionDetailData.model_validate(result),
+        ),
+    )
+
+
 @router.get("/v1/sources/{source_id}", response_model=SourceResponse)
 def source_detail(
     request: Request,
@@ -272,4 +433,32 @@ def source_detail(
             meta=api_meta(settings, release),
             data=SourceData(source=source),
         ),
+    )
+
+
+@router.post("/v1/search", response_model=SearchResponse)
+def search(
+    body: SearchRequest,
+    response: Response,
+    settings: SettingsDependency,
+    database: DatabaseDependency,
+    release: ReleaseDependency,
+) -> SearchResponse:
+    items = database.search(
+        release.release_tag,
+        body.query,
+        body.act_id,
+        body.limit,
+    )
+    if items is None:
+        raise ApiError(
+            404,
+            "act_not_found",
+            "Act not found.",
+            retryable=False,
+        )
+    response.headers["Cache-Control"] = NO_STORE
+    return SearchResponse(
+        meta=api_meta(settings, release),
+        data=SearchData(items=[SearchItem.model_validate(item) for item in items]),
     )
