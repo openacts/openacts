@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --paper: oklch(0.975 0.008 150);
+  --surface: oklch(0.995 0.003 150);
+  --ink: oklch(0.235 0.035 155);
+  --muted: oklch(0.475 0.025 155);
+  --line: oklch(0.86 0.018 150);
+  --action: oklch(0.41 0.115 155);
+  --action-strong: oklch(0.34 0.105 155);
+  --focus: oklch(0.69 0.16 145);
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-action: var(--action);
+  --color-action-strong: var(--action-strong);
+  --color-focus: var(--focus);
+  --font-sans: var(--font-public-sans);
+  --font-reading: var(--font-newsreader);
+}
+
+@layer base {
+  * {
+    border-color: var(--line);
+  }
+
+  body {
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: color-mix(in oklch, var(--focus) 35%, transparent);
+  }
+}

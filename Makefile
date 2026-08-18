@@ -1,4 +1,4 @@
-.PHONY: setup dev db-up db-down ocr-setup ocr-setup-execute test lint check api-check api-run integration-test acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection projection-execute
+.PHONY: setup dev db-up db-down ocr-setup ocr-setup-execute test lint check api-check api-run web-check web-run integration-test acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection projection-execute
 
 ifneq (,$(wildcard .env))
 include .env
@@ -8,6 +8,7 @@ OPENACTS_PROJECTION_DATABASE_URL ?= postgresql://$(POSTGRES_USER):$(POSTGRES_PAS
 OPENACTS_API_DATABASE_URL ?= postgresql://$(OPENACTS_API_USER):$(OPENACTS_API_PASSWORD)@127.0.0.1:$(OPENACTS_POSTGRES_PORT)/$(POSTGRES_DB)
 OPENACTS_TEST_DATABASE_URL ?= postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@127.0.0.1:$(OPENACTS_POSTGRES_PORT)/$(OPENACTS_TEST_DATABASE)
 OPENACTS_API_TEST_DATABASE_URL ?= postgresql://$(OPENACTS_API_USER):$(OPENACTS_API_PASSWORD)@127.0.0.1:$(OPENACTS_POSTGRES_PORT)/$(OPENACTS_TEST_DATABASE)
+NEXT_PUBLIC_OPENACTS_API_URL ?= http://127.0.0.1:8000
 COMPOSE = docker compose --project-name openacts --file compose.yaml
 
 .env:
@@ -17,7 +18,8 @@ COMPOSE = docker compose --project-name openacts --file compose.yaml
 setup:
 	uv sync --project pipeline
 
-dev: db-up api-run
+dev: db-up
+	@$(MAKE) --no-print-directory -j2 api-run web-run
 
 db-up: .env
 	$(COMPOSE) up -d --wait postgres
@@ -37,7 +39,7 @@ test:
 lint:
 	uv run --project pipeline ruff check pipeline/src pipeline/tests tests/test_contract.py
 
-check: lint test api-check
+check: lint test api-check web-check
 
 api-check:
 	uv run --project api ruff check api/src api/tests
@@ -45,6 +47,12 @@ api-check:
 
 api-run: .env
 	OPENACTS_API_DATABASE_URL="$(OPENACTS_API_DATABASE_URL)" OPENACTS_APPLICATION_REVISION="$$(git rev-parse HEAD)" uv run --env-file .env --project api uvicorn openacts_api.app:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
+
+web-check:
+	NEXT_PUBLIC_OPENACTS_API_URL="$(NEXT_PUBLIC_OPENACTS_API_URL)" OPENACTS_WEB_REVISION="$$(git rev-parse HEAD)" npm --prefix web run check
+
+web-run:
+	NEXT_PUBLIC_OPENACTS_API_URL="$(NEXT_PUBLIC_OPENACTS_API_URL)" OPENACTS_WEB_REVISION="$$(git rev-parse HEAD)" npm --prefix web run dev
 
 integration-test: db-up
 	OPENACTS_TEST_DATABASE_URL="$(OPENACTS_TEST_DATABASE_URL)" uv run --project pipeline pytest pipeline/tests/test_projection.py
