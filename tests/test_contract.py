@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Test the OpenActs Gate A data contract."""
 
 import copy

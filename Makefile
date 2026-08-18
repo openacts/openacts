@@ -1,6 +1,8 @@
 .PHONY: setup dev db-up db-down ocr-setup ocr-setup-execute test lint check api-check api-run integration-test acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection projection-execute
 
--include .env
+ifneq (,$(wildcard .env))
+include .env
+endif
 
 OPENACTS_PROJECTION_DATABASE_URL ?= postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@127.0.0.1:$(OPENACTS_POSTGRES_PORT)/$(POSTGRES_DB)
 OPENACTS_API_DATABASE_URL ?= postgresql://$(OPENACTS_API_USER):$(OPENACTS_API_PASSWORD)@127.0.0.1:$(OPENACTS_POSTGRES_PORT)/$(POSTGRES_DB)
