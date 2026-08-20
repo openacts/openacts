@@ -31,7 +31,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${publicSans.variable} ${newsreader.variable}`}>
-      <body className="min-h-screen bg-paper font-sans text-ink antialiased">
+      <body
+        suppressHydrationWarning
+        className="min-h-screen bg-paper font-sans text-ink antialiased"
+      >
         <a
           href="#main-content"
           className="fixed left-4 top-0 z-50 -translate-y-full rounded-b-md bg-action px-4 py-3 font-semibold text-white focus:translate-y-0 focus:outline-none focus:ring-2 focus:ring-focus focus:ring-offset-2"

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 
 import { textKindLabel } from "@/lib/act";
 import { fetchActs } from "@/lib/api";
@@ -33,6 +34,8 @@ function StatusBadges({
 }
 
 export default async function ActsPage() {
+  await connection();
+
   // Deliberately uncaught: catching here would serve an outage as HTTP 200.
   const response = await fetchActs(0, 50);
   const { items, pagination } = response.data;
@@ -90,4 +93,3 @@ export default async function ActsPage() {
     </main>
   );
 }
-

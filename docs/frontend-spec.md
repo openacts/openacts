@@ -40,16 +40,32 @@ production.
 |---|---|---|
 | `/` | `GET /v1/acts`, `POST /v1/search` | Known-law search, available Acts, and release identity |
 | `/acts` | `GET /v1/acts` | Paginated Act index |
-| `/acts/[actId]` | `GET /v1/acts/{act_id}`, `GET /v1/acts/{act_id}/contents` | Act identity, status, Sources, and complete contents |
-| `/provisions/[provisionId]` | `GET /v1/provisions/{provision_id}` | Exact legal text, context, Citations, Sources, and navigation |
+| `/acts/[actId]` | `GET /v1/acts/{act_id}`, `GET /v1/acts/{act_id}/contents` | Act identity, status, Sources, and top-level contents |
+| `/acts/[actId]/[provisionPath]` | `GET /v1/provisions/{provision_id}` | Exact legal text, context, Citations, Sources, and navigation |
+| `/provisions/[provisionId]` | — | Identity route; permanently redirects to the Act-scoped Provision route |
 | `/sources/[sourceId]` | `GET /v1/sources/{source_id}` | Source provenance and recorded retrieval locations |
 
-IDs are opaque. Every ID is percent-encoded when inserted into an API or
-frontend path, and the frontend does not derive legal meaning from an ID.
+Provision routes are Act-scoped and readable under
+[Decision 0022](decisions/0022-readable-provision-routes.md). The frontend
+splits a canonical `provision_id` on its first colon to build the route and
+rejoins the two segments to call the API. That single separator is the only
+structure it may assume: it does not parse, order, compare, or derive legal
+meaning from the path, and a pair that does not resolve renders the application
+not-found page. Every other ID stays opaque and percent-encoded.
+
+A container Provision — a chapter, part, schedule, or schedule part — carries no
+wording of its own and renders as an index of its direct children. Sections and
+everything beneath them render as continuous legal text.
 
 Act pagination may use URL query parameters. Search text may not.
 
 ## 4. Reader presentation
+
+The visual system is fixed by
+[Decision 0023](decisions/0023-reader-visual-system.md): three typefaces with one
+role each, the eight existing colour tokens unchanged, a marginal rail carrying
+identity on the left and provenance on the right, and an explicit prohibition on
+cards, badges, and borders as the default grouping device.
 
 The visual direction is a modern public reference instrument rather than a
 government facsimile or generic application dashboard.

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { connection } from "next/server";
 
 import { currentnessText } from "@/lib/act";
 import { OpenActsApiError, fetchActContents, fetchActDetail } from "@/lib/api";
@@ -22,6 +23,8 @@ export default async function ActDetailPage({
 }: {
   params: Promise<{ actId: string }>;
 }) {
+  await connection();
+
   const { actId } = await params;
 
   let detail: ApiResponse<ActDetail>;

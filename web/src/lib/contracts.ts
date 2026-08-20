@@ -86,18 +86,6 @@ export interface ActContentsData {
   items: ProvisionOutlineItem[];
 }
 
-export interface ActResource {
-  source_id: string;
-  document_title?: string;
-}
-
-export interface SourceData {
-  source_id: string;
-  document_title: string | null;
-  document_publisher?: string | null;
-  language?: string | null;
-}
-
 export interface ApiResponse<T> {
   meta: ApiMeta;
   data: T;
