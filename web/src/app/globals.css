@@ -23,6 +23,7 @@
   --color-focus: var(--focus);
   --font-sans: var(--font-public-sans);
   --font-reading: var(--font-newsreader);
+  --font-id: var(--font-roboto-mono);
 }
 
 @layer base {
@@ -32,6 +33,23 @@
 
   body {
     text-rendering: optimizeLegibility;
+  }
+
+  /* Decision 0023: statutory wording is the only content in the reading face,
+     capped at a 66ch measure. Identifiers use tabular figures so digests and
+     page numbers align down the provenance rail. */
+  .law {
+    font-family: var(--font-reading);
+    font-size: 1.1875rem;
+    line-height: 1.75;
+    max-width: 66ch;
+  }
+
+  .id {
+    font-family: var(--font-id);
+    font-size: 0.75rem;
+    line-height: 1.65;
+    font-variant-numeric: tabular-nums;
   }
 
   ::selection {

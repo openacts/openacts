@@ -53,9 +53,16 @@ structure it may assume: it does not parse, order, compare, or derive legal
 meaning from the path, and a pair that does not resolve renders the application
 not-found page. Every other ID stays opaque and percent-encoded.
 
-A container Provision — a chapter, part, schedule, or schedule part — carries no
-wording of its own and renders as an index of its direct children. Sections and
-everything beneath them render as continuous legal text.
+Every Provision renders whatever content blocks it carries. A container — a
+chapter, part, division, cross-heading, schedule, or schedule part — then lists
+its direct children, one level only, instead of rendering the subtree beneath
+it. A section, and everything below a section, renders its descendants as
+continuous legal text.
+
+The rule follows the record rather than the node type. Containers are usually
+wordless, but two schedule parts in the Constitution carry a table directly, and
+259 of its sections carry no wording of their own while the subsections beneath
+them do.
 
 Act pagination may use URL query parameters. Search text may not.
 

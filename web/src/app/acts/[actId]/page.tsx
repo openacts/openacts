@@ -1,15 +1,19 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
+import { Suspense } from "react";
 
-import { currentnessText } from "@/lib/act";
-import { OpenActsApiError, fetchActContents, fetchActDetail } from "@/lib/api";
-import type {
-  ActContentsData,
-  ActDateKind,
-  ActDetail,
-  ApiResponse,
-} from "@/lib/contracts";
+import {
+  ActArrangement,
+  ActArrangementSkeleton,
+} from "@/components/act-arrangement";
+import { CopyButton } from "@/components/copy-button";
+import { RailBlock, ReadingLayout } from "@/components/reading-layout";
+import { actTextKind, textKindLabel } from "@/lib/act";
+import { OpenActsApiError, fetchActDetail } from "@/lib/api";
+import type { ActDateKind, ActDetail, ApiResponse } from "@/lib/contracts";
+import { sourceHref } from "@/lib/provision";
 
 const DATE_LABELS: Record<ActDateKind, string> = {
   assent: "Assent",
@@ -18,131 +22,127 @@ const DATE_LABELS: Record<ActDateKind, string> = {
   repeal: "Repeal",
 };
 
-export default async function ActDetailPage({
-  params,
-}: {
-  params: Promise<{ actId: string }>;
-}) {
-  await connection();
-
-  const { actId } = await params;
-
-  let detail: ApiResponse<ActDetail>;
+// 4xx means not addressable, so a real 404. Anything else propagates as 500.
+async function loadAct(actId: string): Promise<ApiResponse<ActDetail>> {
   try {
-    detail = await fetchActDetail(actId);
+    return await fetchActDetail(actId);
   } catch (error) {
-    // 4xx means not addressable, so a real 404. Anything else propagates as 500.
-    if (error instanceof OpenActsApiError && error.status >= 400 && error.status < 500) {
+    if (
+      error instanceof OpenActsApiError &&
+      error.status >= 400 &&
+      error.status < 500
+    ) {
       notFound();
     }
     throw error;
   }
+}
 
-  // Contents are secondary: their failure must not hide Act metadata.
-  let contents: ApiResponse<ActContentsData> | null = null;
-  try {
-    contents = await fetchActContents(actId);
-  } catch (error) {
-    if (!(error instanceof OpenActsApiError)) {
-      throw error;
-    }
-  }
+export async function generateMetadata({
+  params,
+}: PageProps<"/acts/[actId]">): Promise<Metadata> {
+  const { actId } = await params;
+  const { data } = await loadAct(actId);
+  return {
+    title: data.act.titles.official,
+    description: data.act.titles.long ?? data.act.titles.official,
+  };
+}
 
+export default async function ActDetailPage({
+  params,
+}: PageProps<"/acts/[actId]">) {
+  await connection();
+
+  const { actId } = await params;
+
+  // Awaited before any JSX is returned, so nothing has flushed and the response
+  // status is still ours to set. A loading.tsx here would open a Suspense
+  // boundary over the whole segment, flush the shell first, and turn every
+  // notFound() into a soft 404.
+  const detail = await loadAct(actId);
   const { act, sources } = detail.data;
-  const outline = contents?.data.items ?? [];
 
   return (
     <main id="main-content">
-      <section className="mx-auto max-w-5xl px-5 py-16 sm:px-8">
-        <Link href="/acts" className="text-sm text-muted hover:underline">
-          ← Back to all Acts
+      <section className="mx-auto max-w-6xl px-5 py-12 sm:px-8 sm:py-16">
+        <Link
+          href="/acts"
+          className="id rounded-sm text-muted underline focus:outline-none focus:ring-2 focus:ring-focus focus:ring-offset-2"
+        >
+          &larr; All Acts
         </Link>
 
-        <article className="mt-5 border-b border-line pb-8">
-          <h1 className="font-reading text-4xl leading-tight text-ink">
-            {act.titles.official}
-          </h1>
-          {act.titles.short && act.titles.short !== act.titles.official ? (
-            <p className="mt-2 text-sm text-muted">{act.titles.short}</p>
-          ) : null}
-          <p className="mt-2 text-sm text-muted">
-            {act.citation ?? "No citation recorded"} · {act.year}
-            {act.number ? ` · No. ${act.number}` : ""}
-          </p>
-          <p className="mt-3 text-xs text-muted">{currentnessText(act)}</p>
-          {act.titles.long ? (
-            <p className="mt-6 max-w-2xl font-reading text-lg leading-8 text-ink">
-              {act.titles.long}
-            </p>
-          ) : null}
-        </article>
-
-        <section className="mt-10 grid gap-10 lg:grid-cols-[2fr_1fr]">
-          <div>
-            <h2 className="font-reading text-2xl text-ink">Contents</h2>
-            {outline.length > 0 ? (
-              <ol className="mt-4 space-y-2">
-                {outline.map((item) => (
-                  <li
-                    key={item.provision_id}
-                    className="rounded-md border border-line bg-surface px-4 py-3"
-                    style={{ marginLeft: `${item.depth * 1.25}rem` }}
-                  >
-                    <p className="font-medium text-ink">
-                      {item.display_label ?? item.node_type}
-                      {item.heading ? ` · ${item.heading}` : ""}
-                    </p>
-                    <p className="text-sm text-muted">
-                      {item.has_content ? "Has provision text" : "Structure only"}
-                    </p>
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p className="mt-4 rounded-md border border-line bg-surface px-4 py-4 text-sm text-muted">
-                {contents
-                  ? "No outline nodes are recorded for this Act yet."
-                  : "Contents are unavailable right now. The Act metadata above is unaffected."}
+        <div className="mt-6">
+          <ReadingLayout
+            provenance={
+              <>
+                <RailBlock title="Text">
+                  {textKindLabel(actTextKind(act)).toLowerCase()}
+                  <br />
+                  status {act.status}
+                  <br />
+                  {act.checked_through_date
+                    ? `checked through ${act.checked_through_date}`
+                    : "currentness not established"}
+                </RailBlock>
+                <RailBlock title="Citation">
+                  <span className="text-ink">
+                    {act.citation ?? "No citation recorded"}
+                  </span>
+                </RailBlock>
+                <RailBlock title="Dates">
+                  {(Object.keys(DATE_LABELS) as ActDateKind[]).map((kind) => (
+                    <span key={kind} className="block">
+                      {DATE_LABELS[kind].toLowerCase()} &mdash;{" "}
+                      {act.dates[kind]?.date ?? "not recorded"}
+                    </span>
+                  ))}
+                </RailBlock>
+                <RailBlock title={`Sources (${sources.length})`}>
+                  {sources.map((source) => (
+                    <Link
+                      key={source.source_id}
+                      href={sourceHref(source.source_id)}
+                      className="block rounded-sm underline focus:outline-none focus:ring-2 focus:ring-focus focus:ring-offset-2"
+                    >
+                      {source.document_title ?? "Untitled source"}
+                    </Link>
+                  ))}
+                </RailBlock>
+              </>
+            }
+          >
+            <h1 className="max-w-[20ch] font-reading text-[clamp(2rem,1.5rem+2vw,2.75rem)] font-medium leading-[1.15] text-ink">
+              {act.titles.official}
+            </h1>
+            {act.titles.short && act.titles.short !== act.titles.official ? (
+              <p className="mt-3 text-[0.9375rem] text-muted">
+                {act.titles.short}
               </p>
-            )}
-          </div>
+            ) : null}
 
-          <aside className="space-y-8">
-            <div className="border border-line bg-surface px-6 py-5">
-              <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-muted">
-                Sources ({sources.length})
-              </h2>
-              <ul className="mt-3 space-y-3 text-sm">
-                {sources.map((source) => (
-                  <li key={source.source_id} className="text-ink">
-                    {source.document_title ?? "Untitled source"}
-                    {source.document_publisher ? (
-                      <span className="block text-xs text-muted">
-                        {source.document_publisher}
-                      </span>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
+            <div className="mt-4 flex flex-wrap gap-x-6">
+              <CopyButton value={act.citation ?? act.titles.official} label="Copy citation" />
             </div>
 
-            <div className="border border-line bg-surface px-6 py-5">
-              <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-muted">
-                Dates
-              </h2>
-              <dl className="mt-3 space-y-2 text-sm">
-                {(Object.keys(DATE_LABELS) as ActDateKind[]).map((kind) => (
-                  <div key={kind} className="flex justify-between gap-4">
-                    <dt className="text-muted">{DATE_LABELS[kind]}</dt>
-                    <dd className="text-ink">
-                      {act.dates[kind]?.date ?? "Not recorded"}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          </aside>
-        </section>
+            {act.titles.long ? (
+              <p className="law mt-8 text-ink">{act.titles.long}</p>
+            ) : null}
+
+            <h2 className="mt-12 font-reading text-2xl font-medium text-ink">
+              Arrangement
+            </h2>
+            {/* Streams after the status is settled: the arrangement costs a
+                second API call and is the expensive half of this page. */}
+            <Suspense fallback={<ActArrangementSkeleton />}>
+              <ActArrangement
+                actId={actId}
+                actRelease={detail.meta.corpus_release}
+              />
+            </Suspense>
+          </ReadingLayout>
+        </div>
       </section>
     </main>
   );

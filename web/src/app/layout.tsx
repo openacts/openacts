@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Newsreader, Public_Sans } from "next/font/google";
+import { Newsreader, Public_Sans, Roboto_Mono } from "next/font/google";
 import { Suspense } from "react";
 
 import { ReleaseIdentity } from "@/components/release-identity";
@@ -19,6 +19,14 @@ const newsreader = Newsreader({
   display: "swap",
 });
 
+// Decision 0023: the identifier role — provision and Source ids, digests,
+// release tags, page numbers, and the provenance rail.
+const robotoMono = Roboto_Mono({
+  variable: "--font-roboto-mono",
+  subsets: ["latin"],
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: {
     default: "OpenActs",
@@ -30,7 +38,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${publicSans.variable} ${newsreader.variable}`}>
+    <html lang="en" className={`${publicSans.variable} ${newsreader.variable} ${robotoMono.variable}`}>
       <body
         suppressHydrationWarning
         className="min-h-screen bg-paper font-sans text-ink antialiased"
