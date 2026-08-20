@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { apiRequest, OpenActsApiError } from "./api";
+import { actTag, apiRequest, CORPUS_TAG, OpenActsApiError } from "./api";
 import type { MetaData } from "./contracts";
 
 const metaResponse = {
@@ -25,7 +25,9 @@ describe("apiRequest", () => {
     delete process.env.NEXT_PUBLIC_OPENACTS_API_URL;
   });
 
-  it("requests the configured API without caching", async () => {
+  // Decision 0024: corpus reads are cached and tagged, and expire on no timer.
+  // Release activation purges them; nothing else may.
+  it("requests the configured API with a tagged, non-expiring cache", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(metaResponse), {
         status: 200,
@@ -39,7 +41,27 @@ describe("apiRequest", () => {
     expect(fetchMock.mock.calls[0]?.[0].toString()).toBe(
       "http://127.0.0.1:8000/v1/meta",
     );
-    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ cache: "no-store" });
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      next: { revalidate: false, tags: [CORPUS_TAG] },
+    });
+  });
+
+  it("tags an Act-scoped read with its Act so it can be purged alone", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(metaResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiRequest<MetaData>("/v1/meta", {}, [
+      CORPUS_TAG,
+      actTag("ng-federal-act-2023-37"),
+    ]);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      next: { tags: [CORPUS_TAG, "act:ng-federal-act-2023-37"] },
+    });
   });
 
   it("preserves typed API errors", async () => {

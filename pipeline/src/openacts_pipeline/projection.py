@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 import tarfile
 import tempfile
 import unicodedata
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, fields
 from datetime import date
 from pathlib import Path
@@ -678,6 +681,43 @@ def execute_projection(
         ) from exc
 
 
+# Decision 0024: the reader caches corpus reads and only forgets them when a
+# release is activated. Activation therefore owns the purge, and a purge that
+# does not happen leaves a live release invisible in the reader.
+def revalidate_reader(release_tag: str) -> dict[str, Any] | None:
+    """Purge the reader cache after activation. None when not configured."""
+    url = os.environ.get("OPENACTS_REVALIDATE_URL")
+    if not url:
+        return None
+
+    secret = os.environ.get("OPENACTS_REVALIDATE_SECRET")
+    if not secret:
+        raise PipelineError(
+            "revalidate_secret_missing",
+            "OPENACTS_REVALIDATE_URL is set but "
+            "OPENACTS_REVALIDATE_SECRET is not",
+        )
+
+    request = urllib.request.Request(
+        url,
+        data=json.dumps({"tags": ["corpus"]}).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "X-OpenActs-Revalidate-Secret": secret,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise PipelineError(
+            "revalidate_failed",
+            f"{release_tag} is active but the reader cache was not purged, "
+            f"so the reader will serve the previous release: {exc}",
+        ) from exc
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="openacts-projection")
     parser.add_argument("release")
@@ -702,6 +742,16 @@ def main(argv: list[str] | None = None) -> int:
             if args.execute
             else preview_projection(REPO_ROOT, args.release)
         )
+        if args.execute:
+            revalidation = revalidate_reader(args.release)
+            if revalidation is None:
+                print(
+                    "warning: OPENACTS_REVALIDATE_URL is not set, so no reader "
+                    "cache was purged for this activation",
+                    file=sys.stderr,
+                )
+            else:
+                result["reader_revalidation"] = revalidation
     except PipelineError as exc:
         print(
             json.dumps({"status": "failure", "error": exc.as_dict()}),

@@ -22,10 +22,15 @@ Tailwind CSS. FastAPI remains the only corpus backend.
   directly from FastAPI.
 - Client Components are limited to search, copy actions, and interactions that
   require browser state.
-- The frontend has no Route Handlers, Server Actions, corpus files, database
-  access, or proxy endpoints.
-- Initial reader GET requests use uncached fetching so an explicitly activated
-  corpus release cannot remain hidden behind an uncoordinated frontend cache.
+- The frontend has no Server Actions, corpus files, database access, or proxy
+  endpoints, and exactly one Route Handler: `POST /api/revalidate`, defined by
+  [Decision 0024](decisions/0024-release-scoped-reader-cache.md). It purges
+  cached corpus reads and nothing else. It must never read, proxy, or return
+  corpus data; any Route Handler that would is still prohibited.
+- Reader GET requests are cached and tagged, and expire on no timer. Release
+  activation purges them, so an explicitly activated corpus release can never
+  remain hidden behind a stale frontend cache. A purge that fails must fail the
+  activation that caused it rather than leaving a live release invisible.
 - Search calls `POST /v1/search` directly from the browser and never places the
   query in a URL, persistent browser storage, analytics, or application logs.
 
@@ -70,8 +75,9 @@ Act pagination may use URL query parameters. Search text may not.
 
 The visual system is fixed by
 [Decision 0023](decisions/0023-reader-visual-system.md): three typefaces with one
-role each, the eight existing colour tokens unchanged, a marginal rail carrying
-identity on the left and provenance on the right, and an explicit prohibition on
+role each, the eight existing colour tokens unchanged, a left rail carrying
+identity and sibling navigation, provenance as a currentness line under the
+title and a Source footnote under the wording, and an explicit prohibition on
 cards, badges, and borders as the default grouping device.
 
 The visual direction is a modern public reference instrument rather than a

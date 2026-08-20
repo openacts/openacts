@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { connection } from "next/server";
 
 import { textKindLabel } from "@/lib/act";
 import { fetchActs } from "@/lib/api";
@@ -22,7 +21,6 @@ function pageHref(offset: number): string {
 }
 
 export default async function ActsPage({ searchParams }: PageProps<"/acts">) {
-  await connection();
 
   const offset = parseOffset((await searchParams).offset);
 

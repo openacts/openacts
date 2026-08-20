@@ -1,5 +1,3 @@
-import { connection } from "next/server";
-
 import { apiRequest, OpenActsApiError } from "@/lib/api";
 import type { MetaData } from "@/lib/contracts";
 
@@ -12,7 +10,6 @@ function webRevision(): string {
 }
 
 export async function ReleaseIdentity() {
-  await connection();
   const revision = webRevision();
   let identity: { corpus: string | null; api: string } | null;
 

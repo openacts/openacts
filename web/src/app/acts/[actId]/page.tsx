@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { connection } from "next/server";
 import { Suspense } from "react";
 
 import {
@@ -52,7 +51,6 @@ export async function generateMetadata({
 export default async function ActDetailPage({
   params,
 }: PageProps<"/acts/[actId]">) {
-  await connection();
 
   const { actId } = await params;
   const decodedActId = decodeRouteParam(actId);

@@ -27,7 +27,16 @@ const robotoMono = Roboto_Mono({
   display: "swap",
 });
 
+// Without metadataBase, Next emits canonical and Open Graph URLs as paths.
+// Vercel supplies the production host; local development falls back.
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : "http://localhost:3000");
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: {
     default: "OpenActs",
     template: "%s | OpenActs",

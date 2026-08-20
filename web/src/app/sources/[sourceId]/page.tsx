@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { connection } from "next/server";
 
 import { RailBlock, ReadingLayout } from "@/components/reading-layout";
 import { OpenActsApiError, fetchSource } from "@/lib/api";
@@ -50,7 +49,6 @@ export async function generateMetadata({
 export default async function SourcePage({
   params,
 }: PageProps<"/sources/[sourceId]">) {
-  await connection();
 
   const { sourceId } = await params;
   const response = await loadSource(sourceIdFrom(sourceId));

@@ -56,9 +56,19 @@ function isApiErrorResponse(value: unknown): value is ApiErrorResponse {
   );
 }
 
+// Decision 0024: corpus reads are cached and invalidated by release activation,
+// never by a timer, because nothing changes on a timer. Every read carries the
+// `corpus` tag; Act-scoped reads also carry `act:<act_id>`.
+export const CORPUS_TAG = "corpus";
+
+export function actTag(actId: string): string {
+  return `act:${actId}`;
+}
+
 export async function apiRequest<T>(
   path: string,
   init: RequestInit = {},
+  tags: readonly string[] = [CORPUS_TAG],
 ): Promise<ApiResponse<T>> {
   const headers = new Headers(init.headers);
   if (!headers.has("Accept")) {
@@ -69,7 +79,7 @@ export async function apiRequest<T>(
   let response: Response;
   try {
     response = await fetch(url, {
-      cache: "no-store",
+      next: { revalidate: false, tags: [...tags] },
       ...init,
       headers,
     });
@@ -134,12 +144,15 @@ export function encodePathSegment(value: string): string {
 // share a single request instead of calling the API twice per navigation.
 export const fetchActs = cache(async (offset = 0, limit = 50) => {
   const path = apiPath("/v1/acts", { offset, limit });
-  return apiRequest<ActSummaryListData>(path);
+  return apiRequest<ActSummaryListData>(path, {}, [CORPUS_TAG]);
 });
 
 export const fetchActDetail = cache(async (actId: string) => {
   const encoded = encodePathSegment(actId);
-  return apiRequest<ActDetail>(`/v1/acts/${encoded}`);
+  return apiRequest<ActDetail>(`/v1/acts/${encoded}`, {}, [
+    CORPUS_TAG,
+    actTag(actId),
+  ]);
 });
 
 // Positional primitives rather than an options object: cache() compares
@@ -157,16 +170,25 @@ export const fetchActContents = cache(
       params.max_depth = maxDepth;
     }
     const path = apiPath(`/v1/acts/${encoded}/contents`, params);
-    return apiRequest<ActContentsData>(path);
+    return apiRequest<ActContentsData>(path, {}, [CORPUS_TAG, actTag(actId)]);
   },
 );
 
 export const fetchProvision = cache(async (provisionId: string) => {
   const encoded = encodePathSegment(provisionId);
-  return apiRequest<ProvisionDetail>(`/v1/provisions/${encoded}`);
+  // The Act half of a Provision id is its owning Act; see decision 0022.
+  const colon = provisionId.indexOf(":");
+  const tags =
+    colon > 0
+      ? [CORPUS_TAG, actTag(provisionId.slice(0, colon))]
+      : [CORPUS_TAG];
+  return apiRequest<ProvisionDetail>(`/v1/provisions/${encoded}`, {}, tags);
 });
 
+// Sources are corpus-global and owned by no Act (decision 0016).
 export const fetchSource = cache(async (sourceId: string) => {
   const encoded = encodePathSegment(sourceId);
-  return apiRequest<SourceDetailData>(`/v1/sources/${encoded}`);
+  return apiRequest<SourceDetailData>(`/v1/sources/${encoded}`, {}, [
+    CORPUS_TAG,
+  ]);
 });

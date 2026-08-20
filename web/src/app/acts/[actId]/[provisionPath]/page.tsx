@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { connection } from "next/server";
 import { Suspense } from "react";
 
 import { ContentBlocks } from "@/components/content/content-blocks";
@@ -128,7 +127,6 @@ function ChildIndex({ nodes }: { nodes: ProvisionRecord[] }) {
 export default async function ProvisionPage({
   params,
 }: PageProps<"/acts/[actId]/[provisionPath]">) {
-  await connection();
 
   const { actId, provisionPath } = await params;
   const detail = await loadProvision(provisionIdFrom(actId, provisionPath));

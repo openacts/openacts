@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { connection } from "next/server";
 
 import { Search } from "@/components/search";
 import { textKindLabel } from "@/lib/act";
@@ -24,7 +23,6 @@ async function loadActs(): Promise<ActSummary[] | null> {
 }
 
 export default async function Home() {
-  await connection();
   const acts = await loadActs();
 
   return (
