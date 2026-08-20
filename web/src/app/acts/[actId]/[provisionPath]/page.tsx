@@ -164,6 +164,7 @@ export default async function ProvisionPage({
               <ProvisionNav
                 actId={act.act_id}
                 provisionId={provision.provision_id}
+                parent={ancestors.at(-1) ?? null}
               />
             </Suspense>
           </div>

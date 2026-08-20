@@ -142,10 +142,24 @@ export const fetchActDetail = cache(async (actId: string) => {
   return apiRequest<ActDetail>(`/v1/acts/${encoded}`);
 });
 
-export const fetchActContents = cache(async (actId: string) => {
-  const encoded = encodePathSegment(actId);
-  return apiRequest<ActContentsData>(`/v1/acts/${encoded}/contents`);
-});
+// Positional primitives rather than an options object: cache() compares
+// arguments by identity, and a fresh object literal per call would defeat it.
+// Unfiltered, this returns every node of the Act — 803 KB for the Constitution
+// — so callers that need one level ask for it.
+export const fetchActContents = cache(
+  async (actId: string, parentProvisionId?: string, maxDepth?: number) => {
+    const encoded = encodePathSegment(actId);
+    const params: Record<string, string | number> = {};
+    if (parentProvisionId !== undefined) {
+      params.parent_provision_id = parentProvisionId;
+    }
+    if (maxDepth !== undefined) {
+      params.max_depth = maxDepth;
+    }
+    const path = apiPath(`/v1/acts/${encoded}/contents`, params);
+    return apiRequest<ActContentsData>(path);
+  },
+);
 
 export const fetchProvision = cache(async (provisionId: string) => {
   const encoded = encodePathSegment(provisionId);

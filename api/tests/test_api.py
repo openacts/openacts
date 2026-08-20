@@ -179,6 +179,7 @@ class FakeDatabase:
         self.release = release
         self.active_release_calls = 0
         self.reader_calls: list[tuple[object, ...]] = []
+        self.contents_filters: list[tuple[str | None, int | None]] = []
 
     def open(self) -> None:
         pass
@@ -209,9 +210,14 @@ class FakeDatabase:
         return SOURCE_RECORD if source_id == SOURCE_ID else None
 
     def get_act_contents(
-        self, release_tag: str, act_id: str
+        self,
+        release_tag: str,
+        act_id: str,
+        parent_provision_id: str | None = None,
+        max_depth: int | None = None,
     ) -> list[dict[str, Any]] | None:
         self.reader_calls.append(("get_act_contents", release_tag, act_id))
+        self.contents_filters.append((parent_provision_id, max_depth))
         return ACT_CONTENTS if act_id == ACT_ID else None
 
     def get_provision(
@@ -503,3 +509,51 @@ def test_search_is_private_bounded_and_release_scoped() -> None:
         ("search", RELEASE.release_tag, "Café", None, 20),
         ("search", RELEASE.release_tag, "section 1", MISSING_ACT_ID, 20),
     ]
+
+
+def test_act_contents_filters_reach_the_reader() -> None:
+    """The outline filters are parsed, validated and forwarded.
+
+    That the SQL narrows correctly is proven against a real database by the
+    projection integration tests, not by this double.
+    """
+    database = FakeDatabase()
+    with TestClient(create_app(settings(), database)) as client:
+        whole = client.get(f"/v1/acts/{ACT_ID}/contents")
+        by_parent = client.get(
+            f"/v1/acts/{ACT_ID}/contents",
+            params={"parent_provision_id": f"{ACT_ID}:part-1"},
+        )
+        by_depth = client.get(
+            f"/v1/acts/{ACT_ID}/contents",
+            params={"max_depth": 1},
+        )
+
+    assert whole.status_code == 200
+    assert by_parent.status_code == 200
+    assert by_depth.status_code == 200
+    assert database.contents_filters == [
+        (None, None),
+        (f"{ACT_ID}:part-1", None),
+        (None, 1),
+    ]
+
+
+def test_act_contents_rejects_invalid_filters() -> None:
+    database = FakeDatabase()
+    with TestClient(create_app(settings(), database)) as client:
+        bad_parent = client.get(
+            f"/v1/acts/{ACT_ID}/contents",
+            params={"parent_provision_id": "NOT-AN-ID"},
+        )
+        negative_depth = client.get(
+            f"/v1/acts/{ACT_ID}/contents",
+            params={"max_depth": -1},
+        )
+
+    assert bad_parent.status_code == 400
+    assert bad_parent.json()["error"]["code"] == "invalid_request"
+    assert negative_depth.status_code == 400
+    assert negative_depth.json()["error"]["code"] == "invalid_request"
+    # Nothing invalid reaches the reader.
+    assert database.contents_filters == []

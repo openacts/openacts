@@ -1,9 +1,8 @@
 import Link from "next/link";
 
 import { OpenActsApiError, fetchActContents } from "@/lib/api";
-import type { ProvisionOutlineItem } from "@/lib/contracts";
+import type { ProvisionOutlineItem, ProvisionSummary } from "@/lib/contracts";
 import { nodeTypeLabel, provisionHref, provisionTitle } from "@/lib/provision";
-import { siblingContext } from "@/lib/reading";
 
 function UpToParentIcon() {
   return (
@@ -28,13 +27,20 @@ function shortLabel(node: ProvisionOutlineItem): string {
   return node.display_label ?? node.heading ?? nodeTypeLabel(node.node_type);
 }
 
-// Sibling navigation is context, not content: if the outline cannot be read the
-// page still renders its legal text, which is the part that matters.
-async function loadOutline(
+// Asks for one parent's children rather than the whole Act: 978 bytes instead
+// of 803 KB for the Constitution. A root Provision's siblings are the other
+// roots, which is depth 0.
+//
+// Sibling navigation is context, not content: if it cannot be read the page
+// still renders its legal text, which is the part that matters.
+async function loadSiblings(
   actId: string,
+  parent: ProvisionSummary | null,
 ): Promise<ProvisionOutlineItem[] | null> {
   try {
-    const response = await fetchActContents(actId);
+    const response = parent
+      ? await fetchActContents(actId, parent.provision_id)
+      : await fetchActContents(actId, undefined, 0);
     return response.data.items;
   } catch (error) {
     if (!(error instanceof OpenActsApiError)) {
@@ -60,22 +66,22 @@ export function ProvisionNavSkeleton() {
 export async function ProvisionNav({
   actId,
   provisionId,
+  parent,
 }: {
   actId: string;
   provisionId: string;
+  parent: ProvisionSummary | null;
 }) {
-  const items = await loadOutline(actId);
-  if (!items) {
-    return null;
-  }
+  const siblings = await loadSiblings(actId, parent);
 
-  const context = siblingContext(items, provisionId);
   // One sibling is the Provision itself; there is nothing to navigate between.
-  if (!context || context.siblings.length < 2) {
+  if (!siblings || siblings.length < 2) {
     return null;
   }
 
-  const { parent, siblings, currentIndex } = context;
+  const currentIndex = siblings.findIndex(
+    (sibling) => sibling.provision_id === provisionId,
+  );
 
   return (
     <nav

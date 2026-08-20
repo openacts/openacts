@@ -258,6 +258,23 @@ zero for a root Provision. The list includes structural nodes without content
 because they remain part of the legal hierarchy. It does not duplicate content
 blocks.
 
+Two optional query parameters bound the result. Both may be combined, and
+omitting both returns every node of the Act.
+
+| Parameter | Rule | Effect |
+|---|---|---|
+| `parent_provision_id` | a canonical Provision ID | Only that node's direct children |
+| `max_depth` | integer, zero or greater | Only nodes at or above that depth |
+
+An unbounded outline is large: the 1999 Constitution returns 2,487 nodes and
+about 800 KB. `max_depth=1` returns 87 nodes, and a `parent_provision_id`
+returns that node's children alone.
+
+A `parent_provision_id` that is well formed but names no Provision in the Act
+returns an empty list rather than `404`; these are filters, not lookups. A
+malformed value, or a negative `max_depth`, is `400 invalid_request`. A missing
+Act is still `404 act_not_found`.
+
 ## 6. Provisions and Sources
 
 ### `GET /v1/provisions/{provision_id}`

@@ -2,7 +2,11 @@ import Link from "next/link";
 
 import { OpenActsApiError, fetchActContents } from "@/lib/api";
 import type { ActContentsData, ApiResponse } from "@/lib/contracts";
-import { outlineNodeCount, topLevelOutline } from "@/lib/outline";
+import {
+  ACT_OUTLINE_MAX_DEPTH,
+  outlineNodeCount,
+  topLevelOutline,
+} from "@/lib/outline";
 import { nodeTypeLabel, provisionHref } from "@/lib/provision";
 
 const PLACEHOLDERS = [0, 1, 2, 3, 4, 5];
@@ -31,7 +35,8 @@ type Load =
 // secondary — their failure must not hide Act metadata.
 async function loadContents(actId: string): Promise<Load> {
   try {
-    return { ok: true, response: await fetchActContents(actId) };
+    // The Act page shows the top two levels: 87 nodes rather than 2487.
+    return { ok: true, response: await fetchActContents(actId, undefined, ACT_OUTLINE_MAX_DEPTH) };
   } catch (error) {
     if (!(error instanceof OpenActsApiError)) {
       throw error;
@@ -88,8 +93,7 @@ export async function ActArrangement({
         </p>
       ) : null}
       <p className="id mt-2 text-muted">
-        Top-level structure &middot; {outlineNodeCount(sections)} of{" "}
-        {items.length} provisions
+        Top-level structure &middot; {outlineNodeCount(sections)} divisions
       </p>
       <ol className="mt-5 border-t border-line">
         {sections.map((section) => (

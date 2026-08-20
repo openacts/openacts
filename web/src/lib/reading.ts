@@ -1,4 +1,4 @@
-import type { ProvisionOutlineItem, ProvisionRecord } from "./contracts";
+import type { ProvisionRecord } from "./contracts";
 
 // A container lists one level. The API returns the whole subtree, so direct
 // children are selected here rather than fetched separately.
@@ -28,39 +28,4 @@ export function relativeDepths(
   }
 
   return depths;
-}
-
-export interface SiblingContext {
-  parent: ProvisionOutlineItem | null;
-  siblings: ProvisionOutlineItem[];
-  currentIndex: number;
-}
-
-// The Provision endpoint returns ancestors and document-order navigation, but
-// never siblings, so the reader derives them from the Act outline. Nodes are
-// matched on parent_provision_id; a root Provision's siblings are the other
-// roots, which the projection guarantees have a null parent.
-export function siblingContext(
-  items: readonly ProvisionOutlineItem[],
-  provisionId: string,
-): SiblingContext | null {
-  const current = items.find((item) => item.provision_id === provisionId);
-  if (!current) {
-    return null;
-  }
-
-  const siblings = items
-    .filter((item) => item.parent_provision_id === current.parent_provision_id)
-    .sort((a, b) => a.sequence - b.sequence);
-
-  return {
-    parent:
-      items.find(
-        (item) => item.provision_id === current.parent_provision_id,
-      ) ?? null,
-    siblings,
-    currentIndex: siblings.findIndex(
-      (item) => item.provision_id === provisionId,
-    ),
-  };
 }

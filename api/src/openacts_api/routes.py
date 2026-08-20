@@ -29,6 +29,10 @@ SourceId = Annotated[str, Path(pattern=SOURCE_ID_PATTERN)]
 SearchActId = Annotated[str, Field(pattern=ACT_ID_PATTERN)]
 Offset = Annotated[int, Query(ge=0)]
 Limit = Annotated[int, Query(ge=1, le=100)]
+# Optional outline filters. A reader that needs one node's children should not
+# have to download the whole Act to find them.
+ParentProvisionId = Annotated[str | None, Query(pattern=PROVISION_ID_PATTERN)]
+MaxDepth = Annotated[int | None, Query(ge=0)]
 
 router = APIRouter()
 
@@ -366,8 +370,15 @@ def act_contents(
     settings: SettingsDependency,
     database: DatabaseDependency,
     release: ReleaseDependency,
+    parent_provision_id: ParentProvisionId = None,
+    max_depth: MaxDepth = None,
 ) -> Response:
-    rows = database.get_act_contents(release.release_tag, act_id)
+    rows = database.get_act_contents(
+        release.release_tag,
+        act_id,
+        parent_provision_id=parent_provision_id,
+        max_depth=max_depth,
+    )
     if rows is None:
         raise ApiError(
             404,

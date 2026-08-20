@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { ProvisionOutlineItem, ProvisionRecord } from "./contracts";
-import { directChildren, relativeDepths, siblingContext } from "./reading";
+import type { ProvisionRecord } from "./contracts";
+import { directChildren, relativeDepths } from "./reading";
 
 const ACT = "ng-federal-act-1999-constitution";
 
@@ -55,58 +55,5 @@ describe("relativeDepths", () => {
       record("orphan", "somewhere-else"),
     ]);
     expect(depths.get(`${ACT}:orphan`)).toBe(1);
-  });
-});
-
-function outlineItem(
-  path: string,
-  parent: string | null,
-  sequence: number,
-): ProvisionOutlineItem {
-  return {
-    provision_id: `${ACT}:${path}`,
-    parent_provision_id: parent === null ? null : `${ACT}:${parent}`,
-    node_type: "subsection",
-    display_label: `(${sequence})`,
-    heading: null,
-    order: sequence,
-    sequence,
-    depth: parent === null ? 0 : 1,
-    has_content: true,
-    has_children: false,
-  };
-}
-
-describe("siblingContext", () => {
-  const outline = [
-    outlineItem("section-1", null, 1),
-    outlineItem("section-1.subsection-1", "section-1", 2),
-    outlineItem("section-1.subsection-2", "section-1", 3),
-    outlineItem("section-1.subsection-3", "section-1", 4),
-    outlineItem("section-2", null, 5),
-  ];
-
-  it("finds the siblings sharing a parent, in document order", () => {
-    const context = siblingContext(outline, `${ACT}:section-1.subsection-2`);
-    expect(context?.siblings.map((s) => s.provision_id)).toEqual([
-      `${ACT}:section-1.subsection-1`,
-      `${ACT}:section-1.subsection-2`,
-      `${ACT}:section-1.subsection-3`,
-    ]);
-    expect(context?.currentIndex).toBe(1);
-    expect(context?.parent?.provision_id).toBe(`${ACT}:section-1`);
-  });
-
-  it("treats the other roots as siblings of a root Provision", () => {
-    const context = siblingContext(outline, `${ACT}:section-1`);
-    expect(context?.parent).toBeNull();
-    expect(context?.siblings.map((s) => s.provision_id)).toEqual([
-      `${ACT}:section-1`,
-      `${ACT}:section-2`,
-    ]);
-  });
-
-  it("returns nothing when the Provision is not in the outline", () => {
-    expect(siblingContext(outline, `${ACT}:missing`)).toBeNull();
   });
 });

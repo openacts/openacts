@@ -73,7 +73,10 @@ _GET_ACT_CONTENTS_SQL = """
               AND child.parent_provision_id = provision.provision_id
         ) AS has_children
     FROM provisions AS provision
-    WHERE provision.release_tag = %s AND provision.act_id = %s
+    WHERE provision.release_tag = %s
+      AND provision.act_id = %s
+      AND (%s::text IS NULL OR provision.parent_provision_id = %s)
+      AND (%s::integer IS NULL OR provision.depth <= %s)
     ORDER BY provision.sequence
 """
 
@@ -661,8 +664,18 @@ class ProjectionDatabase:
         return act, [sources_by_id[source_id] for source_id in source_ids]
 
     def get_act_contents(
-        self, release_tag: str, act_id: str
+        self,
+        release_tag: str,
+        act_id: str,
+        parent_provision_id: str | None = None,
+        max_depth: int | None = None,
     ) -> list[dict[str, Any]] | None:
+        """Outline rows for an Act, optionally bounded to one subtree level.
+
+        Both filters are optional and independent. Omitting them returns the
+        whole Act, which is what the reader needed before it could ask for a
+        single parent's children.
+        """
         with self._connection() as connection:
             act = connection.execute(
                 "SELECT 1 FROM acts WHERE release_tag = %s AND act_id = %s",
@@ -672,7 +685,14 @@ class ProjectionDatabase:
                 return None
             rows = connection.execute(
                 _GET_ACT_CONTENTS_SQL,
-                (release_tag, act_id),
+                (
+                    release_tag,
+                    act_id,
+                    parent_provision_id,
+                    parent_provision_id,
+                    max_depth,
+                    max_depth,
+                ),
             ).fetchall()
         return list(rows)
 
