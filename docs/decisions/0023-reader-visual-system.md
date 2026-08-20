@@ -38,7 +38,7 @@ face, which is what gives it visual priority.
 |---|---|---|
 | Reading | Newsreader | Statutory wording, Act and Provision titles, section headings |
 | Interface | Public Sans | Navigation, controls, labels, prose that is not law |
-| Identifier | Roboto Mono | Provision and Source identifiers, digests, release tags, page numbers, the provenance rail |
+| Identifier | Roboto Mono | Provision and Source identifiers, digests, release tags, page numbers, and all provenance |
 
 Public Sans is retained. It is the United States Web Design System typeface,
 maintained by that design system and derived from Libre Franklin, and it is
@@ -77,26 +77,41 @@ The signature device is borrowed from the statute page itself, where the label
 sits outside the text block:
 
 ```
- label rail │ reading column (66ch)              │ provenance rail
-────────────┼────────────────────────────────────┼──────────────────
-        1.  │ Supremacy of the Constitution      │ CONSOLIDATED
-            │                                    │ status unknown
-       (1)  │ This Constitution is supreme and   │ single_reviewed
-            │ its provisions shall have binding  │
-            │ force on all authorities and       │ SOURCE
-            │ persons throughout the Federal     │ PLAC 2021 reprint
-            │ Republic of Nigeria.               │ page 23
+ siblings   │ label │ reading column (66ch)
+────────────┼───────┼──────────────────────────────────────
+ ↑ PART I   │       │ SUBSECTION
+            │  (1)  │ Supremacy of the Constitution
+ › (1)      │       │ consolidated · status unknown ·
+   (2)      │       │ currentness not established
+   (3)      │       │
+            │       │ This Constitution is supreme and its
+            │       │ provisions shall have binding force
+            │       │ on all authorities and persons
+            │       │ throughout the Federal Republic of
+            │       │ Nigeria.
+            │       │ ──────────────────────────────────
+            │       │ PLAC 2021 reprint, page 23 of 274 ·
+            │       │ text fidelity single_reviewed
 ```
 
-The left rail carries identity: the hanging Provision label, and the year on the
-Act index. The right rail carries provenance, in the identifier face, which is
-how §4's requirement that provenance stay "visibly separate from the wording
-they qualify" is met without a box. One vertical hairline marks the reading
-column's left edge; it is the only persistent rule on the page.
+The left carries orientation: on a Provision page, the siblings sharing its
+parent, with the current one marked and a link up to that parent. The Act
+endpoint does not return siblings, so they are derived from the Act outline.
+Inside that, the hanging Provision label sits in its own narrow rail, and one
+vertical hairline marks the reading column's left edge — the only persistent
+rule on the page. The Act index uses the same left rail for the year.
 
-Below `48rem` the layout is one ordered column: labels become inline prefixes on
-the wording they introduce, and the provenance rail moves above the wording as a
-compact strip. Nothing is removed at any width.
+Provenance is not a rail. `text_kind`, `status` and `checked_through_date` sit
+as one line of identifier text directly under the title they qualify, and the
+Source and `text_fidelity` sit as a footnote under the wording, above a hairline.
+Both stay in the identifier face and out of the reading face, which is what
+keeps them visibly separate from the wording under §4; neither is ever combined
+with the other into a single verified signal.
+
+Below `64rem` the layout is one ordered column: the sibling list becomes a
+horizontal scrolling strip of labels above the wording, and the hanging labels
+become inline prefixes. One list, two shapes — nothing is duplicated, and
+nothing is removed at any width.
 
 ### Prohibited
 
@@ -130,6 +145,17 @@ removing the cards and pills is what §11.2 asks for directly.
 
 Keeping the palette unchanged holds decision 0007's "small project theme" and
 keeps the diff to layout and type, where the actual problem is.
+
+## Amendments
+
+**20 August 2026.** Provenance was originally specified as a right-hand rail
+carrying text kind, status, currentness, fidelity, Source and release. Reading
+the built page showed two problems: a Provision gave no visibility into its
+sibling Provisions, and the rail spent the most valuable column on metadata.
+The left is now sibling navigation, and provenance is split between a
+currentness line under the title and a Source footnote under the wording. The
+requirement it serves is unchanged — provenance stays in the identifier face,
+visibly separate from the wording, and the two quality axes stay distinct.
 
 ## Least certain
 

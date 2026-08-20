@@ -13,7 +13,7 @@ import { RailBlock, ReadingLayout } from "@/components/reading-layout";
 import { actTextKind, textKindLabel } from "@/lib/act";
 import { OpenActsApiError, fetchActDetail } from "@/lib/api";
 import type { ActDateKind, ActDetail, ApiResponse } from "@/lib/contracts";
-import { sourceHref } from "@/lib/provision";
+import { decodeRouteParam, sourceHref } from "@/lib/provision";
 
 const DATE_LABELS: Record<ActDateKind, string> = {
   assent: "Assent",
@@ -42,7 +42,7 @@ export async function generateMetadata({
   params,
 }: PageProps<"/acts/[actId]">): Promise<Metadata> {
   const { actId } = await params;
-  const { data } = await loadAct(actId);
+  const { data } = await loadAct(decodeRouteParam(actId) ?? actId);
   return {
     title: data.act.titles.official,
     description: data.act.titles.long ?? data.act.titles.official,
@@ -55,12 +55,16 @@ export default async function ActDetailPage({
   await connection();
 
   const { actId } = await params;
+  const decodedActId = decodeRouteParam(actId);
+  if (decodedActId === null) {
+    notFound();
+  }
 
   // Awaited before any JSX is returned, so nothing has flushed and the response
   // status is still ours to set. A loading.tsx here would open a Suspense
   // boundary over the whole segment, flush the shell first, and turn every
   // notFound() into a soft 404.
-  const detail = await loadAct(actId);
+  const detail = await loadAct(decodedActId);
   const { act, sources } = detail.data;
 
   return (
@@ -137,7 +141,7 @@ export default async function ActDetailPage({
                 second API call and is the expensive half of this page. */}
             <Suspense fallback={<ActArrangementSkeleton />}>
               <ActArrangement
-                actId={actId}
+                actId={decodedActId}
                 actRelease={detail.meta.corpus_release}
               />
             </Suspense>

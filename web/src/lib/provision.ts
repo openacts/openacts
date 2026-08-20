@@ -105,3 +105,37 @@ export function actHref(actId: string): string {
 export function sourceHref(sourceId: string): string {
   return `/sources/${encodeURIComponent(sourceId)}`;
 }
+
+// Next hands dynamic route params through still percent-encoded, so a Source
+// digest's colon arrives as %3A rather than ":". Every route param is decoded
+// before use. A malformed escape sequence is not an addressable record.
+export function decodeRouteParam(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
+// A subsection or paragraph usually carries no heading of its own — 259 of the
+// Constitution's sections and every one of its 897 subsections are unheaded.
+// Falling back to the node type produces a title like "(1) Subsection", which
+// names nothing. Legal reference reads such a Provision under the nearest
+// heading above it, so that is what the page shows.
+export function inheritedHeading(
+  node: ProvisionHeading,
+  ancestors: readonly ProvisionHeading[],
+): string | null {
+  const own = node.heading?.trim();
+  if (own) {
+    return own;
+  }
+
+  for (let index = ancestors.length - 1; index >= 0; index -= 1) {
+    const inherited = ancestors[index]?.heading?.trim();
+    if (inherited) {
+      return inherited;
+    }
+  }
+  return null;
+}
