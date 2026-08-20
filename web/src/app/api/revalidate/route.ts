@@ -6,7 +6,7 @@ import { CORPUS_TAG } from "@/lib/api";
 // Decision 0024. This is the single Route Handler the frontend has, and the
 // only one it may have. It exists to forget cached corpus reads after a release
 // is activated. It reads no corpus data, proxies nothing, and returns no legal
-// text — that boundary is the whole reason it is permitted.
+// text. That boundary is the whole reason it is permitted.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 

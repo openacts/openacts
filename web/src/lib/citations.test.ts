@@ -37,7 +37,7 @@ function citation(
 
 describe("segmentBlockText", () => {
   it("splits a cited range out of the surrounding wording", () => {
-    // "See section 1." — the fixture range in tests/fixtures/valid/citation.json
+    // "See section 1." with the fixture range from tests/fixtures/valid/citation.json
     const segments = segmentBlockText("See section 1.", [citation(4, 13)]);
     expect(segments).toEqual([
       { text: "See ", citation: null },

@@ -32,7 +32,7 @@ type Load =
 
 // Kept free of JSX so the try/catch cannot swallow a rendering error: React
 // renders returned elements after this has already resolved. Contents are
-// secondary — their failure must not hide Act metadata.
+// secondary, so their failure must not hide Act metadata.
 async function loadContents(actId: string): Promise<Load> {
   try {
     // The Act page shows the top two levels: 87 nodes rather than 2487.

@@ -67,7 +67,7 @@ export async function generateMetadata({
   const { data } = await loadProvision(provisionIdFrom(actId, provisionPath));
   const title = provisionTitle(data.provision);
   return {
-    title: `${title} — ${data.act.official_title}`,
+    title: `${title}, ${data.act.official_title}`,
     description: `${title} of the ${data.act.official_title}, with its Source and text fidelity.`,
     alternates: {
       canonical: provisionHref(data.provision.provision_id),

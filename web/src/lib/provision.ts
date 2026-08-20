@@ -117,7 +117,7 @@ export function decodeRouteParam(value: string): string | null {
   }
 }
 
-// A subsection or paragraph usually carries no heading of its own — 259 of the
+// A subsection or paragraph usually carries no heading of its own. 259 of the
 // Constitution's sections and every one of its 897 subsections are unheaded.
 // Falling back to the node type produces a title like "(1) Subsection", which
 // names nothing. Legal reference reads such a Provision under the nearest

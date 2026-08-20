@@ -96,7 +96,7 @@ export default async function ActDetailPage({
                 <RailBlock title="Dates">
                   {(Object.keys(DATE_LABELS) as ActDateKind[]).map((kind) => (
                     <span key={kind} className="block">
-                      {DATE_LABELS[kind].toLowerCase()} &mdash;{" "}
+                      {DATE_LABELS[kind].toLowerCase()}:{" "}
                       {act.dates[kind]?.date ?? "not recorded"}
                     </span>
                   ))}

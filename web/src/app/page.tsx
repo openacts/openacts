@@ -32,8 +32,9 @@ export default async function Home() {
           Read the law at the provision.
         </h1>
         <p className="mt-6 max-w-[34rem] text-[1.0625rem] leading-8 text-muted">
-          Nigerian Acts as exact, navigable legal text — every provision
-          permanently linked, every word traceable to the document it came from.
+          Nigerian Acts as exact, navigable legal text. Every provision is
+          permanently linked and every word traceable to the document it came
+          from.
         </p>
 
         <div className="mt-12">

@@ -121,7 +121,7 @@ export async function runSearch(
 }
 
 // `excerpt` is the head of the projection's derived searchable text, which for
-// a short Provision is just its label and heading again — the result would then
+// a short Provision is just its label and heading again, so the result would
 // state the same thing twice. Whitespace is collapsed because this is generated
 // search text, not canonical wording, so no source line break is being lost.
 export function excerptBeyondTitle(

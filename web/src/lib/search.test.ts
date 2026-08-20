@@ -34,7 +34,7 @@ function item(match_kind: SearchItem["match_kind"]): SearchItem {
 
 describe("normalizeQuery", () => {
   it("normalizes to NFC and trims, as the API does", () => {
-    // "Café" decomposed — e + combining acute — must fold to the composed form.
+    // "Café" decomposed (e plus combining acute) must fold to the composed form.
     expect(normalizeQuery("  Café  ")).toBe("Café");
   });
 });

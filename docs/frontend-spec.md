@@ -168,6 +168,26 @@ Tests are added with the implementation slice they protect.
 - Frontend lint, unit tests, TypeScript checks, and production build run through
   `make check` and hosted CI.
 
+Performance is measured against a production build, never `next dev`, which is
+roughly twenty times slower and misleads. Baselines, measured 20 August 2026
+with the API on the same host:
+
+| Measure | Baseline | Note |
+|---|---|---|
+| Client JavaScript, any route | 173 KB compressed | React and the App Router runtime |
+| Application client code | ~2 KB | search; the copy button is not measurable |
+| Fonts per page | 115 KB, 3 files | one face per family, `display: swap` |
+| Provision page HTML | 8.7 KB compressed | 33 KB uncompressed |
+| Provision page API bytes | 6 KB | two calls |
+| Act page API bytes | 28 KB | two calls |
+| Warm page render, cached | ~32 ms | ~140 ms on a cache miss |
+
+The 173 KB is a floor, not a budget: routes with no Client Components at all
+measure the same, so it is the cost of decision 0007's stack rather than
+anything the reader adds. Client JavaScript is worth attention when the
+application figure moves, not when the total does.
+
+
 ## 9. Delivery order
 
 1. Frontend foundation, configuration, local development, checks, and CI.

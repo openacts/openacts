@@ -19,8 +19,8 @@ const newsreader = Newsreader({
   display: "swap",
 });
 
-// Decision 0023: the identifier role — provision and Source ids, digests,
-// release tags, page numbers, and the provenance rail.
+// Decision 0023: the identifier role, covering provision and Source ids,
+// digests, release tags, page numbers, and provenance.
 const robotoMono = Roboto_Mono({
   variable: "--font-roboto-mono",
   subsets: ["latin"],

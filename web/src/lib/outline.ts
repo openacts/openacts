@@ -7,7 +7,7 @@ export interface OutlineSection {
 
 // GET /v1/acts/{id}/contents returns every node of the Act: 2487 for the 1999
 // Constitution, 647 for the NDPA. Rendering all of them cost 1.5 MB of HTML for
-// one Act. The Act page shows the top two levels — 87 and 101 nodes — and hands
+// one Act. The Act page shows the top two levels, 87 and 101 nodes, and hands
 // deeper structure to the Provision page.
 export const ACT_OUTLINE_MAX_DEPTH = 1;
 

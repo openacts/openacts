@@ -30,7 +30,7 @@ export function citationsForBlock(
 // Splits text into plain and cited runs without inserting, deleting, or
 // normalizing a single character: joining the result reproduces the input
 // exactly. A range that is out of bounds, inverted, or overlapping one already
-// applied is dropped — displaying the wording correctly outranks linking it.
+// applied is dropped. Displaying the wording correctly outranks linking it.
 export function segmentBlockText(
   text: string,
   citations: readonly ProvisionCitation[],
