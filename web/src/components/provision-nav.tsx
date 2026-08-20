@@ -5,6 +5,25 @@ import type { ProvisionOutlineItem } from "@/lib/contracts";
 import { nodeTypeLabel, provisionHref, provisionTitle } from "@/lib/provision";
 import { siblingContext } from "@/lib/reading";
 
+function UpToParentIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h11a5 5 0 0 1 5 5v6" />
+    </svg>
+  );
+}
+
 function shortLabel(node: ProvisionOutlineItem): string {
   return node.display_label ?? node.heading ?? nodeTypeLabel(node.node_type);
 }
@@ -70,21 +89,21 @@ export async function ProvisionNav({
       {/* Parent and position share one line. The parent truncates because a
           heading is arbitrarily long and the rail is not; the full text stays
           in the accessibility tree, since truncation here is purely visual. */}
-      <div className="mb-3 hidden items-baseline gap-2 lg:flex">
+      {/* Icon only: the parent is already spelled out in the breadcrumb above,
+          so the name here would be a third copy. It stays the link's accessible
+          name and its hover title rather than being dropped. */}
+      <div className="mb-3 hidden items-center gap-2 lg:flex">
         {parent ? (
           <Link
             href={provisionHref(parent.provision_id)}
-            title={provisionTitle(parent)}
-            className="id min-w-0 flex-1 truncate rounded-sm text-muted underline focus:outline-none focus:ring-2 focus:ring-focus focus:ring-offset-2"
+            title={`Up to ${provisionTitle(parent)}`}
+            aria-label={`Up to ${provisionTitle(parent)}`}
+            className="inline-flex flex-none items-center rounded-sm p-1 text-muted hover:text-action-strong focus:outline-none focus:ring-2 focus:ring-focus focus:ring-offset-2"
           >
-            &uarr; {provisionTitle(parent)}
+            <UpToParentIcon />
           </Link>
-        ) : (
-          <span className="id min-w-0 flex-1 truncate text-muted">
-            This Act
-          </span>
-        )}
-        <span className="id flex-none text-muted">
+        ) : null}
+        <span className="id flex-1 text-muted">
           {currentIndex + 1}/{siblings.length}
         </span>
       </div>
