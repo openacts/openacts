@@ -8,11 +8,14 @@ import {
   ActArrangementSkeleton,
 } from "@/components/act-arrangement";
 import { CopyButton } from "@/components/copy-button";
+import { JsonLd } from "@/components/json-ld";
 import { RailBlock, ReadingLayout } from "@/components/reading-layout";
 import { actTextKind, textKindLabel } from "@/lib/act";
 import { OpenActsApiError, fetchActDetail } from "@/lib/api";
 import type { ActDateKind, ActDetail, ApiResponse } from "@/lib/contracts";
-import { decodeRouteParam, sourceHref } from "@/lib/provision";
+import { actHref, decodeRouteParam, sourceHref } from "@/lib/provision";
+import { absoluteUrl } from "@/lib/site";
+import { actLegislation, breadcrumbList } from "@/lib/structured-data";
 
 const DATE_LABELS: Record<ActDateKind, string> = {
   assent: "Assent",
@@ -41,9 +44,19 @@ export async function generateMetadata({
 }: PageProps<"/acts/[actId]">): Promise<Metadata> {
   const { actId } = await params;
   const { data } = await loadAct(decodeRouteParam(actId) ?? actId);
+  const url = absoluteUrl(actHref(decodeRouteParam(actId) ?? actId));
+  const description = data.act.titles.long ?? data.act.titles.official;
   return {
     title: data.act.titles.official,
-    description: data.act.titles.long ?? data.act.titles.official,
+    description,
+    alternates: { canonical: url },
+    openGraph: {
+      type: "article",
+      title: data.act.titles.official,
+      description,
+      url,
+      siteName: "OpenActs",
+    },
   };
 }
 
@@ -59,9 +72,28 @@ export default async function ActDetailPage({
 
   const detail = await loadAct(decodedActId);
   const { act, sources } = detail.data;
+  const url = absoluteUrl(actHref(decodedActId));
+  const summary = {
+    act_id: act.act_id,
+    official_title: act.titles.official,
+    short_title: act.titles.short,
+    year: act.year,
+    number: act.number,
+    citation: act.citation,
+    text_kind: actTextKind(act),
+    status: act.status,
+    checked_through_date: act.checked_through_date,
+  };
 
   return (
     <main id="main-content">
+      <JsonLd data={actLegislation(act, summary, url)} />
+      <JsonLd
+        data={breadcrumbList([
+          { name: "Acts", url: absoluteUrl("/acts") },
+          { name: act.titles.official, url },
+        ])}
+      />
       <section className="mx-auto max-w-6xl px-5 py-12 sm:px-8 sm:py-16">
         <Link
           href="/acts"

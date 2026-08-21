@@ -5,6 +5,7 @@ import { Suspense } from "react";
 
 import { ContentBlocks } from "@/components/content/content-blocks";
 import { CopyButton } from "@/components/copy-button";
+import { JsonLd } from "@/components/json-ld";
 import { LawBlock } from "@/components/law-block";
 import { CurrentnessLine, SourceFootnote } from "@/components/provenance";
 import {
@@ -29,6 +30,8 @@ import {
   provisionTitle,
 } from "@/lib/provision";
 import { directChildren, relativeDepths } from "@/lib/reading";
+import { absoluteUrl } from "@/lib/site";
+import { breadcrumbList, provisionLegislation } from "@/lib/structured-data";
 
 function provisionIdFrom(actId: string, provisionPath: string): string {
   const act = decodeRouteParam(actId);
@@ -62,11 +65,18 @@ export async function generateMetadata({
   const { actId, provisionPath } = await params;
   const { data } = await loadProvision(provisionIdFrom(actId, provisionPath));
   const title = provisionTitle(data.provision);
+  const url = absoluteUrl(provisionHref(data.provision.provision_id));
+  const description = `${title} of the ${data.act.official_title}, with its Source and text fidelity.`;
   return {
     title: `${title}, ${data.act.official_title}`,
-    description: `${title} of the ${data.act.official_title}, with its Source and text fidelity.`,
-    alternates: {
-      canonical: provisionHref(data.provision.provision_id),
+    description,
+    alternates: { canonical: url },
+    openGraph: {
+      type: "article",
+      title: `${title}, ${data.act.official_title}`,
+      description,
+      url,
+      siteName: "OpenActs",
     },
   };
 }
@@ -133,8 +143,31 @@ export default async function ProvisionPage({
   const children = isContainer ? directChildren(provision.provision_id, descendants) : [];
   const depths = relativeDepths(provision.provision_id, descendants);
 
+  const url = absoluteUrl(provisionHref(provision.provision_id));
+  const actUrl = absoluteUrl(actHref(act.act_id));
+  const title = provisionTitle(provision);
+
   return (
     <main id="main-content">
+      <JsonLd
+        data={provisionLegislation(
+          { ...provision, act_id: act.act_id },
+          title,
+          act,
+          url,
+          actUrl,
+        )}
+      />
+      <JsonLd
+        data={breadcrumbList([
+          { name: act.official_title, url: actUrl },
+          ...ancestors.map((ancestor) => ({
+            name: provisionTitle(ancestor),
+            url: absoluteUrl(provisionHref(ancestor.provision_id)),
+          })),
+          { name: title, url },
+        ])}
+      />
       <section className="mx-auto max-w-6xl px-5 py-12 sm:px-8 sm:py-16">
         <nav aria-label="Breadcrumb" className="id flex flex-wrap items-center gap-x-2 gap-y-1 text-muted">
           <Link href={actHref(act.act_id)} className="rounded-sm underline focus:outline-none focus:ring-2 focus:ring-focus focus:ring-offset-2">

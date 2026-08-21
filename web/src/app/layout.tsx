@@ -4,6 +4,7 @@ import { Newsreader, Public_Sans, Roboto_Mono } from "next/font/google";
 import { Suspense } from "react";
 
 import { ReleaseIdentity } from "@/components/release-identity";
+import { siteOrigin } from "@/lib/site";
 
 import "./globals.css";
 
@@ -25,14 +26,8 @@ const robotoMono = Roboto_Mono({
   display: "swap",
 });
 
-const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL ??
-  (process.env.VERCEL_PROJECT_PRODUCTION_URL
-    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-    : "http://localhost:3000");
-
 export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
+  metadataBase: new URL(siteOrigin()),
   title: {
     default: "OpenActs",
     template: "%s | OpenActs",
