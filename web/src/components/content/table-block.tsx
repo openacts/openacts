@@ -32,8 +32,6 @@ function CellView({
       "border-b border-line px-3 py-2 align-top text-[0.9375rem] leading-6",
   };
 
-  // A genuinely empty printed cell. Cells covered by another cell's span are
-  // omitted by the corpus, not marked blank, so nothing is rendered for them.
   const body = cell.blank ? null : (
     <ContentBlocks
       blocks={cell.content_blocks}
@@ -87,9 +85,6 @@ function RowGroup({
   return <tbody>{rows}</tbody>;
 }
 
-// A real HTML table: caption, row-group roles, scope on headers, explicit
-// headers association, and spans. Wide tables scroll inside their own container
-// rather than shrinking the wording (frontend-spec §5).
 export function TableBlockView({
   block,
   provisionId,

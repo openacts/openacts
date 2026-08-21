@@ -56,9 +56,6 @@ function isApiErrorResponse(value: unknown): value is ApiErrorResponse {
   );
 }
 
-// Decision 0024: corpus reads are cached and invalidated by release activation,
-// never by a timer, because nothing changes on a timer. Every read carries the
-// `corpus` tag; Act-scoped reads also carry `act:<act_id>`.
 export const CORPUS_TAG = "corpus";
 
 export function actTag(actId: string): string {
@@ -140,8 +137,6 @@ export function encodePathSegment(value: string): string {
   return encodeURIComponent(value);
 }
 
-// cache() dedupes within one render pass, so generateMetadata and the page body
-// share a single request instead of calling the API twice per navigation.
 export const fetchActs = cache(async (offset = 0, limit = 50) => {
   const path = apiPath("/v1/acts", { offset, limit });
   return apiRequest<ActSummaryListData>(path, {}, [CORPUS_TAG]);
@@ -155,10 +150,6 @@ export const fetchActDetail = cache(async (actId: string) => {
   ]);
 });
 
-// Positional primitives rather than an options object: cache() compares
-// arguments by identity, and a fresh object literal per call would defeat it.
-// Unfiltered, this returns every node of the Act, which is 803 KB for the
-// Constitution, so callers that need one level ask for it.
 export const fetchActContents = cache(
   async (actId: string, parentProvisionId?: string, maxDepth?: number) => {
     const encoded = encodePathSegment(actId);
@@ -176,7 +167,6 @@ export const fetchActContents = cache(
 
 export const fetchProvision = cache(async (provisionId: string) => {
   const encoded = encodePathSegment(provisionId);
-  // The Act half of a Provision id is its owning Act; see decision 0022.
   const colon = provisionId.indexOf(":");
   const tags =
     colon > 0
@@ -185,7 +175,6 @@ export const fetchProvision = cache(async (provisionId: string) => {
   return apiRequest<ProvisionDetail>(`/v1/provisions/${encoded}`, {}, tags);
 });
 
-// Sources are corpus-global and owned by no Act (decision 0016).
 export const fetchSource = cache(async (sourceId: string) => {
   const encoded = encodePathSegment(sourceId);
   return apiRequest<SourceDetailData>(`/v1/sources/${encoded}`, {}, [

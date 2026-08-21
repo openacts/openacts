@@ -30,8 +30,6 @@ import {
 } from "@/lib/provision";
 import { directChildren, relativeDepths } from "@/lib/reading";
 
-// Route params arrive percent-encoded; both halves are decoded before being
-// rejoined into the canonical identifier the API expects.
 function provisionIdFrom(actId: string, provisionPath: string): string {
   const act = decodeRouteParam(actId);
   const path = decodeRouteParam(provisionPath);
@@ -47,8 +45,6 @@ async function loadProvision(
   try {
     return await fetchProvision(provisionId);
   } catch (error) {
-    // A malformed id is a 400 and an absent one a 404; neither is addressable,
-    // so both render the application not-found page.
     if (
       error instanceof OpenActsApiError &&
       error.status >= 400 &&
@@ -155,8 +151,6 @@ export default async function ProvisionPage({
         </nav>
 
         <div className="mt-6 grid gap-x-10 gap-y-8 lg:grid-cols-[13rem_minmax(0,1fr)]">
-          {/* Sibling navigation streams: the legal text never waits on the
-              Act outline, which is a second and much larger request. */}
           <div className="min-w-0 lg:col-start-1">
             <Suspense fallback={<ProvisionNavSkeleton />}>
               <ProvisionNav
@@ -168,13 +162,11 @@ export default async function ProvisionPage({
           </div>
 
           <div className="min-w-0 lg:col-start-2">
-            {/* Padded to the same left edge as the reading column below, so the
-                title, the hairline and the wording share one alignment. */}
             <div className="lg:ml-20 lg:border-l lg:border-transparent lg:pl-7">
               <p className="text-[0.6875rem] font-bold uppercase tracking-[0.12em] text-muted">
                 {nodeTypeLabel(provision.node_type)}
               </p>
-              <h1 className="mt-1 max-w-[36rem] text-balance font-reading text-[clamp(2rem,1.5rem+2vw,2.75rem)] font-medium leading-[1.15] text-ink">
+              <h1 className="mt-1 max-w-xl text-balance font-reading text-[clamp(2rem,1.5rem+2vw,2.75rem)] font-medium leading-[1.15] text-ink">
                 {provision.display_label ? (
                   <span className="text-action-strong">
                     {provision.display_label}{" "}

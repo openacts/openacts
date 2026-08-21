@@ -1,7 +1,5 @@
 import type { ProvisionRecord } from "./contracts";
 
-// A container lists one level. The API returns the whole subtree, so direct
-// children are selected here rather than fetched separately.
 export function directChildren(
   provisionId: string,
   descendants: readonly ProvisionRecord[],
@@ -11,10 +9,6 @@ export function directChildren(
   );
 }
 
-// Descendants arrive in preorder, so a parent is always seen before its
-// children and one pass is enough. Depth is relative to the requested
-// Provision, which is 0; anything whose parent is outside the subtree starts
-// at 1 rather than being dropped.
 export function relativeDepths(
   provisionId: string,
   descendants: readonly ProvisionRecord[],

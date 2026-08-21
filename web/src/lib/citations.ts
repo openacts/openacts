@@ -5,16 +5,10 @@ export interface TextSegment {
   citation: ProvisionCitation | null;
 }
 
-// docs/data-model.md is binding: Citation.text_range counts Unicode CODE POINTS
-// over the block's NFC-normalized text, start inclusive and end exclusive.
-// String.prototype.slice indexes UTF-16 code units, so it drifts on any astral
-// character and can split a surrogate pair. Array.from iterates code points.
 function codePoints(text: string): string[] {
   return Array.from(text);
 }
 
-// Citations for a Provision and all its descendants arrive in one flat array,
-// so the renderer groups them itself before segmenting a block.
 export function citationsForBlock(
   citations: readonly ProvisionCitation[],
   provisionId: string,
@@ -27,10 +21,6 @@ export function citationsForBlock(
   );
 }
 
-// Splits text into plain and cited runs without inserting, deleting, or
-// normalizing a single character: joining the result reproduces the input
-// exactly. A range that is out of bounds, inverted, or overlapping one already
-// applied is dropped. Displaying the wording correctly outranks linking it.
 export function segmentBlockText(
   text: string,
   citations: readonly ProvisionCitation[],

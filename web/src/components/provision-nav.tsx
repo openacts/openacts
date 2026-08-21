@@ -27,12 +27,6 @@ function shortLabel(node: ProvisionOutlineItem): string {
   return node.display_label ?? node.heading ?? nodeTypeLabel(node.node_type);
 }
 
-// Asks for one parent's children rather than the whole Act: 978 bytes instead
-// of 803 KB for the Constitution. A root Provision's siblings are the other
-// roots, which is depth 0.
-//
-// Sibling navigation is context, not content: if it cannot be read the page
-// still renders its legal text, which is the part that matters.
 async function loadSiblings(
   actId: string,
   parent: ProvisionSummary | null,
@@ -74,7 +68,6 @@ export async function ProvisionNav({
 }) {
   const siblings = await loadSiblings(actId, parent);
 
-  // One sibling is the Provision itself; there is nothing to navigate between.
   if (!siblings || siblings.length < 2) {
     return null;
   }
@@ -92,12 +85,6 @@ export async function ProvisionNav({
       }
       className="lg:sticky lg:top-8"
     >
-      {/* Parent and position share one line. The parent truncates because a
-          heading is arbitrarily long and the rail is not; the full text stays
-          in the accessibility tree, since truncation here is purely visual. */}
-      {/* Icon only: the parent is already spelled out in the breadcrumb above,
-          so the name here would be a third copy. It stays the link's accessible
-          name and its hover title rather than being dropped. */}
       <div className="mb-3 hidden items-center gap-2 lg:flex">
         {parent ? (
           <Link
@@ -113,8 +100,6 @@ export async function ProvisionNav({
           {currentIndex + 1}/{siblings.length}
         </span>
       </div>
-      {/* One list, two shapes: a scrolling strip of labels on narrow screens,
-          a vertical rail from lg up. Nothing is duplicated or hidden. */}
       <ol className="flex gap-1.5 overflow-x-auto pb-2 lg:flex-col lg:gap-0 lg:overflow-visible lg:pb-0">
         {siblings.map((sibling) => {
           const isCurrent = sibling.provision_id === provisionId;

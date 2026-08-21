@@ -1,6 +1,3 @@
-// Mirrors the closed node_type enum in schemas/provision.schema.json. Unknown
-// values pass through readably rather than being hidden, because a corpus that
-// gains a node type must not silently render as a blank row.
 const NODE_TYPE_LABELS: Record<string, string> = {
   document_title: "Title",
   long_title: "Long title",
@@ -26,9 +23,6 @@ const NODE_TYPE_LABELS: Record<string, string> = {
   explanatory_note: "Explanatory note",
 };
 
-// A container lists its direct children one level down instead of rendering the
-// subtree beneath it. Chapter VI of the Constitution has 578 descendants;
-// rendering it whole repeats the Act-page problem one level down.
 const CONTAINER_NODE_TYPES = new Set([
   "chapter",
   "part",
@@ -52,8 +46,6 @@ export interface ProvisionHeading {
   node_type: string;
 }
 
-// display_label and heading are both source-facing and both nullable. A missing
-// label falls back to the node type, never to a fragment of the provision_id.
 export function provisionTitle(node: ProvisionHeading): string {
   const label = node.display_label?.trim();
   const heading = node.heading?.trim();
@@ -69,10 +61,6 @@ export interface ProvisionIdParts {
   path: string;
 }
 
-// Decision 0022. A canonical provision_id is `<act_id>:<structural-path>` and
-// PROVISION_ID_PATTERN guarantees exactly one colon. Splitting on it is the only
-// structure the frontend may assume: it never parses, orders, compares, or reads
-// legal meaning from the path.
 export function splitProvisionId(provisionId: string): ProvisionIdParts | null {
   const colon = provisionId.indexOf(":");
   if (colon <= 0 || colon === provisionId.length - 1) {
@@ -88,8 +76,6 @@ export function joinProvisionId(actId: string, path: string): string {
   return `${actId}:${path}`;
 }
 
-// A malformed id still gets a route: the API rejects it and the page renders
-// not-found, which is the same outcome as a Provision that does not exist.
 export function provisionHref(provisionId: string): string {
   const parts = splitProvisionId(provisionId);
   if (!parts) {
@@ -106,9 +92,6 @@ export function sourceHref(sourceId: string): string {
   return `/sources/${encodeURIComponent(sourceId)}`;
 }
 
-// Next hands dynamic route params through still percent-encoded, so a Source
-// digest's colon arrives as %3A rather than ":". Every route param is decoded
-// before use. A malformed escape sequence is not an addressable record.
 export function decodeRouteParam(value: string): string | null {
   try {
     return decodeURIComponent(value);
@@ -117,11 +100,6 @@ export function decodeRouteParam(value: string): string | null {
   }
 }
 
-// A subsection or paragraph usually carries no heading of its own. 259 of the
-// Constitution's sections and every one of its 897 subsections are unheaded.
-// Falling back to the node type produces a title like "(1) Subsection", which
-// names nothing. Legal reference reads such a Provision under the nearest
-// heading above it, so that is what the page shows.
 export function inheritedHeading(
   node: ProvisionHeading,
   ancestors: readonly ProvisionHeading[],

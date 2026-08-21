@@ -4,9 +4,6 @@ import { citationsForBlock, segmentBlockText } from "@/lib/citations";
 import type { ProvisionCitation, TextBlock } from "@/lib/contracts";
 import { provisionHref } from "@/lib/provision";
 
-// quoted_text, formula and signature share text's field set and differ only in
-// presentation. Nothing here rewrites the wording: whitespace-pre-line keeps
-// source-significant line breaks that HTML would otherwise collapse.
 const KIND_CLASS: Record<TextBlock["kind"], string> = {
   text: "",
   quoted_text: "border-l border-line pl-5 italic",

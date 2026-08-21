@@ -35,9 +35,6 @@
     text-rendering: optimizeLegibility;
   }
 
-  /* Decision 0023: statutory wording is the only content in the reading face,
-     capped at a 66ch measure. Identifiers use tabular figures so digests and
-     page numbers align down the provenance rail. */
   .law {
     font-family: var(--font-reading);
     font-size: 1.1875rem;

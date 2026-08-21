@@ -30,12 +30,8 @@ type Load =
   | { ok: true; response: ApiResponse<ActContentsData> }
   | { ok: false; requestId: string | null };
 
-// Kept free of JSX so the try/catch cannot swallow a rendering error: React
-// renders returned elements after this has already resolved. Contents are
-// secondary, so their failure must not hide Act metadata.
 async function loadContents(actId: string): Promise<Load> {
   try {
-    // The Act page shows the top two levels: 87 nodes rather than 2487.
     return { ok: true, response: await fetchActContents(actId, undefined, ACT_OUTLINE_MAX_DEPTH) };
   } catch (error) {
     if (!(error instanceof OpenActsApiError)) {

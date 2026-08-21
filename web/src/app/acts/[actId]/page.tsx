@@ -21,7 +21,6 @@ const DATE_LABELS: Record<ActDateKind, string> = {
   repeal: "Repeal",
 };
 
-// 4xx means not addressable, so a real 404. Anything else propagates as 500.
 async function loadAct(actId: string): Promise<ApiResponse<ActDetail>> {
   try {
     return await fetchActDetail(actId);
@@ -58,10 +57,6 @@ export default async function ActDetailPage({
     notFound();
   }
 
-  // Awaited before any JSX is returned, so nothing has flushed and the response
-  // status is still ours to set. A loading.tsx here would open a Suspense
-  // boundary over the whole segment, flush the shell first, and turn every
-  // notFound() into a soft 404.
   const detail = await loadAct(decodedActId);
   const { act, sources } = detail.data;
 
@@ -135,8 +130,6 @@ export default async function ActDetailPage({
             <h2 className="mt-12 font-reading text-2xl font-medium text-ink">
               Arrangement
             </h2>
-            {/* Streams after the status is settled: the arrangement costs a
-                second API call and is the expensive half of this page. */}
             <Suspense fallback={<ActArrangementSkeleton />}>
               <ActArrangement
                 actId={decodedActId}

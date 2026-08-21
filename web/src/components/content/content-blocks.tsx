@@ -4,9 +4,6 @@ import { ListBlockView } from "./list-block";
 import { TableBlockView } from "./table-block";
 import { TextBlockView } from "./text-block";
 
-// Discriminated on `kind`. The three shapes recurse through each other: a list
-// item holds content blocks, a table cell holds content blocks, and a table's
-// notes are content blocks.
 export function ContentBlocks({
   blocks,
   provisionId,

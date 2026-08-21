@@ -51,8 +51,6 @@ function Result({ item }: { item: SearchItem }) {
 
   return (
     <li className="border-b border-line py-5">
-      {/* Context only where it adds something: for an Act result the heading
-          below already is the Act title. */}
       {item.provision ? (
         <p className="id text-muted">
           {item.act.official_title}
@@ -91,8 +89,6 @@ export function Search() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    // A newer submission aborts any older in-flight search (frontend-spec §6).
     inFlight.current?.abort();
     const controller = new AbortController();
     inFlight.current = controller;
@@ -103,7 +99,6 @@ export function Search() {
     try {
       outcome = await runSearch(query, controller.signal);
     } catch (error) {
-      // The abort came from a newer submission that now owns the UI.
       if (controller.signal.aborted) {
         return;
       }
@@ -175,7 +170,6 @@ export function Search() {
         URL, a log, or storage.
       </p>
 
-      {/* Announced politely; focus stays in the field (frontend-spec §7). */}
       <p role="status" aria-live="polite" className="sr-only">
         {announcement}
       </p>

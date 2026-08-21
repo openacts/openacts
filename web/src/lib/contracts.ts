@@ -27,8 +27,6 @@ export interface ActSummaryListData {
   pagination: Pagination;
 }
 
-// The detail endpoint returns the canonical record, not ActSummary: titles are
-// nested and there is no official_title. See schemas/act.schema.json.
 export interface ActRecord {
   act_id: string;
   jurisdiction: string;
@@ -106,11 +104,6 @@ export interface MetaData {
   canonical_schema_versions: string[];
 }
 
-// --- Canonical content model -------------------------------------------------
-// Mirrors schemas/common.schema.json, schemas/table.schema.json and
-// schemas/provision.schema.json. The API passes canonical records through
-// unchanged, so these are the wire shapes.
-
 export interface SourceSpan {
   source_id: string;
   pdf_page: number;
@@ -119,7 +112,6 @@ export interface SourceSpan {
 
 export type TextBlockKind = "text" | "quoted_text" | "formula" | "signature";
 
-// All four text kinds share one field set; only `kind` separates them.
 export interface TextBlock {
   block_id: string;
   kind: TextBlockKind;
@@ -148,7 +140,6 @@ export interface ListBlock {
   block_id: string;
   kind: "list";
   marker_style: ListMarkerStyle;
-  // Required key, but null when no start value is declared.
   start: number | null;
   items: ListItem[];
   source_spans: SourceSpan[];
@@ -162,8 +153,6 @@ export type TableLayoutStatus =
   | "reconstruction_uncertain"
   | "source_conflict";
 
-// role "header" implies a non-null scope; role "data" implies scope === null.
-// Cells covered by another cell's span are omitted, never emitted as blanks.
 export interface TableCell {
   cell_id: string;
   column_start: number;
@@ -240,15 +229,11 @@ export interface ProvisionSummary {
   heading: string | null;
 }
 
-// Adjacency in flat document sequence, not tree siblings: `next` on a section
-// is usually its own first child.
 export interface ProvisionNavigation {
   previous: ProvisionSummary | null;
   next: ProvisionSummary | null;
 }
 
-// Code-point offsets into the block's NFC-normalized text; start inclusive,
-// end exclusive. See docs/data-model.md.
 export interface TextRange {
   start: number;
   end: number;
@@ -320,14 +305,9 @@ export interface ProvisionDetail {
   citations: ProvisionCitation[];
 }
 
-// The source endpoint wraps the canonical record: {data: {source: {...}}}.
 export interface SourceDetailData {
   source: SourceDocument;
 }
-
-// --- Search (POST /v1/search) ------------------------------------------------
-// The query is sent in a bounded POST body and never placed in a URL, storage,
-// or logs. See frontend-spec.md §2 and decision 0011.
 
 export type SearchMatchKind =
   | "exact_act_id"

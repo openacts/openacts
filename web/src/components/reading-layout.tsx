@@ -1,9 +1,5 @@
 import type { ReactNode } from "react";
 
-// Decision 0023. Provenance is first in the DOM because it qualifies the wording
-// that follows, which keeps reading order correct at every width; grid placement
-// alone moves it into the right rail on wide screens. No CSS reordering, so
-// keyboard and screen-reader order match what is seen.
 export function ReadingLayout({
   provenance,
   children,

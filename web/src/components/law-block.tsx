@@ -1,9 +1,5 @@
 import type { ReactNode } from "react";
 
-// The statute's own device: the label sits outside the text block. Inline at
-// narrow widths, pulled into the left margin from lg up. One DOM either way,
-// so nothing is duplicated or hidden. The hairline marks the reading edge and
-// is the only persistent rule on the page (decision 0023).
 export function LawBlock({
   label,
   children,

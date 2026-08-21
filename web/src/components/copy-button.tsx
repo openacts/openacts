@@ -21,9 +21,6 @@ function CopyIcon() {
   );
 }
 
-// One of the few Client Components frontend-spec §2 allows. The confirmation is
-// announced rather than shown by colour alone, and a clipboard rejection says so
-// instead of silently claiming success.
 export function CopyButton({
   value,
   label,

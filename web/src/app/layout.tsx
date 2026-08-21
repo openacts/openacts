@@ -19,16 +19,12 @@ const newsreader = Newsreader({
   display: "swap",
 });
 
-// Decision 0023: the identifier role, covering provision and Source ids,
-// digests, release tags, page numbers, and provenance.
 const robotoMono = Roboto_Mono({
   variable: "--font-roboto-mono",
   subsets: ["latin"],
   display: "swap",
 });
 
-// Without metadataBase, Next emits canonical and Open Graph URLs as paths.
-// Vercel supplies the production host; local development falls back.
 const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL ??
   (process.env.VERCEL_PROJECT_PRODUCTION_URL

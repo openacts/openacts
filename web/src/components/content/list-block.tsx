@@ -13,9 +13,6 @@ const MARKER_STYLE: Record<ListBlock["marker_style"], string> = {
   source: "none",
 };
 
-// A printed label is source data and always wins over a generated marker. The
-// CSS marker is used only when every item is unlabelled and the list declares a
-// real style, which is also the only case where `start` can mean anything.
 export function ListBlockView({
   block,
   provisionId,

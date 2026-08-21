@@ -24,7 +24,6 @@ export default async function ActsPage({ searchParams }: PageProps<"/acts">) {
 
   const offset = parseOffset((await searchParams).offset);
 
-  // Deliberately uncaught: catching here would serve an outage as HTTP 200.
   const response = await fetchActs(offset, ACTS_PAGE_SIZE);
   const { items, pagination } = response.data;
 
@@ -87,7 +86,6 @@ export default async function ActsPage({ searchParams }: PageProps<"/acts">) {
                   <p className="mt-1.5 text-[0.9375rem] text-muted">
                     {act.citation ?? act.short_title ?? "No citation recorded"}
                   </p>
-                  {/* Three independent claims, three separate statements. */}
                   <p className="id mt-2.5 text-muted">
                     {textKindLabel(act.text_kind).toLowerCase()} &middot; status{" "}
                     {act.status} &middot;{" "}

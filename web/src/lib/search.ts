@@ -1,8 +1,5 @@
 import type { ApiResponse, SearchData, SearchItem } from "./contracts";
 
-// The API normalizes to NFC, strips, then measures 1–256 CODE POINTS. The same
-// rules are applied here so the message a person sees agrees with the one the
-// API would return, and so String.length (UTF-16) never disagrees with it.
 export const SEARCH_MAX_CODE_POINTS = 256;
 
 export function normalizeQuery(raw: string): string {
@@ -37,8 +34,6 @@ export function isExactMatch(item: SearchItem): boolean {
   return EXACT_MATCH_KINDS.has(item.match_kind);
 }
 
-// Why a result matched, in the reader's words. No score is shown, because the
-// API deliberately does not expose one.
 const MATCH_REASON: Record<SearchItem["match_kind"], string> = {
   exact_act_id: "matched an Act identifier",
   exact_provision_id: "matched a Provision identifier",
@@ -58,8 +53,6 @@ export interface SearchSplit {
   lexical: SearchItem[];
 }
 
-// The API already returns exact hits ahead of lexical ones; splitting keeps the
-// two visibly distinguished rather than blending them into one ranked list.
 export function splitResults(items: readonly SearchItem[]): SearchSplit {
   return {
     exact: items.filter(isExactMatch),
@@ -76,8 +69,6 @@ function apiBase(): string | null {
   return process.env.NEXT_PUBLIC_OPENACTS_API_URL ?? null;
 }
 
-// Called from the browser. The query travels in a bounded POST body and is
-// never placed in a URL, storage, or a log (frontend-spec §2, decision 0011).
 export async function runSearch(
   raw: string,
   signal: AbortSignal,
@@ -120,10 +111,6 @@ export async function runSearch(
   return { status: "results", items: body.data.items };
 }
 
-// `excerpt` is the head of the projection's derived searchable text, which for
-// a short Provision is just its label and heading again, so the result would
-// state the same thing twice. Whitespace is collapsed because this is generated
-// search text, not canonical wording, so no source line break is being lost.
 export function excerptBeyondTitle(
   excerpt: string | null,
   title: string,

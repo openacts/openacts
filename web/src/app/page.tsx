@@ -7,9 +7,6 @@ import type { ActSummary } from "@/lib/contracts";
 import { ACTS_PAGE_SIZE } from "@/lib/pagination";
 import { actHref } from "@/lib/provision";
 
-// The Act list is context beside the search field, not the reason the page
-// exists. If it cannot be read the field still works, so this degrades rather
-// than taking the home page down with it.
 async function loadActs(): Promise<ActSummary[] | null> {
   try {
     const response = await fetchActs(0, ACTS_PAGE_SIZE);
@@ -31,7 +28,7 @@ export default async function Home() {
         <h1 className="max-w-[18ch] text-balance font-reading text-[clamp(2.5rem,2rem+3vw,3.75rem)] font-medium leading-[1.05] tracking-[-0.02em] text-ink">
           Read the law at the provision.
         </h1>
-        <p className="mt-6 max-w-[34rem] text-[1.0625rem] leading-8 text-muted">
+        <p className="mt-6 max-w-136 text-[1.0625rem] leading-8 text-muted">
           Nigerian Acts as exact, navigable legal text. Every provision is
           permanently linked and every word traceable to the document it came
           from.

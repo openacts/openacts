@@ -4,9 +4,6 @@ import { textKindLabel } from "@/lib/act";
 import type { ActSummary, SourceDocument, SourceSpan } from "@/lib/contracts";
 import { sourceHref } from "@/lib/provision";
 
-// frontend-spec §4 requires text_kind, status and checked_through_date on screen
-// and forbids collapsing them into one verified signal. They stay three
-// statements on one line, close to the title they qualify.
 export function CurrentnessLine({ act }: { act: ActSummary }) {
   return (
     <p className="id mt-3 text-muted">
@@ -21,9 +18,6 @@ export function CurrentnessLine({ act }: { act: ActSummary }) {
   );
 }
 
-// Text fidelity is the second, independent quality axis (plan.md §6.7). It
-// belongs with the Source it measures rather than beside the wording, so it
-// sits in the footnote under the text instead of in a rail.
 export function SourceFootnote({
   sources,
   spans,
