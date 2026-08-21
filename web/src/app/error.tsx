@@ -26,7 +26,7 @@ export default function Error({
           showing partial or stale wording would be worse than showing none.
         </p>
         {error.digest ? (
-          <p className="mt-4 font-mono text-xs text-muted [overflow-wrap:anywhere]">
+          <p className="mt-4 font-mono text-xs text-muted wrap-anywhere">
             Reference {error.digest}
           </p>
         ) : null}

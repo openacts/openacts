@@ -61,7 +61,7 @@ export async function ActArrangement({
           from the API.
         </p>
         {load.requestId ? (
-          <p className="id mt-2 text-muted [overflow-wrap:anywhere]">
+          <p className="id mt-2 text-muted wrap-anywhere">
             Reference {load.requestId}
           </p>
         ) : null}

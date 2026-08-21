@@ -140,7 +140,7 @@ export function Search() {
         <label htmlFor={fieldId} className="sr-only">
           Search Nigerian legislation
         </label>
-        <div className="flex max-w-[38rem] items-center gap-3.5 border-b-2 border-action px-1 py-3">
+        <div className="flex max-w-152 items-center gap-3.5 border-b-2 border-action px-1 py-3">
           <span className="flex flex-none text-action">
             <SearchIcon />
           </span>
@@ -165,7 +165,7 @@ export function Search() {
         </div>
       </form>
 
-      <p id={`${fieldId}-privacy`} className="id mt-3 max-w-[38rem] text-muted">
+      <p id={`${fieldId}-privacy`} className="id mt-3 max-w-152 text-muted">
         Your search is sent only to the corpus API. It is never written to a
         URL, a log, or storage.
       </p>
@@ -175,13 +175,13 @@ export function Search() {
       </p>
 
       {state.name === "invalid" ? (
-        <p className="mt-5 max-w-[38rem] text-[0.9375rem] leading-7 text-muted">
+        <p className="mt-5 max-w-152 text-[0.9375rem] leading-7 text-muted">
           {state.message}
         </p>
       ) : null}
 
       {state.name === "unavailable" ? (
-        <div className="mt-5 max-w-[38rem]">
+        <div className="mt-5 max-w-152">
           <p className="text-[0.9375rem] font-semibold text-ink">
             {state.message}
           </p>
@@ -193,7 +193,7 @@ export function Search() {
       ) : null}
 
       {state.name === "results" && state.items.length === 0 ? (
-        <div className="mt-8 max-w-[38rem] border-t border-line pt-5">
+        <div className="mt-8 max-w-152 border-t border-line pt-5">
           <p className="text-[0.9375rem] leading-7 text-ink">
             No provision in this release matches that search.
           </p>

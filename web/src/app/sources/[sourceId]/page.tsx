@@ -80,7 +80,7 @@ export default async function SourcePage({
           provenance={
             <>
               <RailBlock title="Digest">
-                <span className="[overflow-wrap:anywhere] text-ink">
+                <span className="wrap-anywhere text-ink">
                   {source.source_id}
                 </span>
               </RailBlock>
@@ -128,7 +128,7 @@ export default async function SourcePage({
                 <a
                   href={location.url}
                   rel="nofollow noopener external"
-                  className="id rounded-sm text-action underline [overflow-wrap:anywhere] hover:text-action-strong focus:outline-none focus:ring-2 focus:ring-focus focus:ring-offset-2"
+                  className="id rounded-sm text-action underline wrap-anywhere hover:text-action-strong focus:outline-none focus:ring-2 focus:ring-focus focus:ring-offset-2"
                 >
                   {location.url}
                 </a>

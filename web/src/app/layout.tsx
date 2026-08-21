@@ -63,16 +63,20 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               >
                 OpenActs
               </Link>
-              <p className="hidden text-sm text-muted sm:block">
-                Nigerian legislation, directly readable
-              </p>
+              <nav aria-label="Primary">
+                <Link
+                  href="/acts"
+                  className="min-h-11 rounded-sm px-2 py-2 text-sm font-semibold text-action hover:text-action-strong focus:outline-none focus:ring-2 focus:ring-focus focus:ring-offset-2"
+                >
+                  Acts
+                </Link>
+              </nav>
             </div>
           </header>
           <div className="flex-1">{children}</div>
           <footer className="border-t border-line bg-surface">
-            <div className="mx-auto flex w-full max-w-7xl flex-col gap-2 px-5 py-6 text-xs text-muted sm:px-8 md:flex-row md:items-center md:justify-between">
-              <p>Open, source-backed Nigerian legislation.</p>
-              <Suspense fallback={<p>Loading release identity…</p>}>
+            <div className="mx-auto flex w-full max-w-7xl px-5 py-4 text-muted sm:px-8">
+              <Suspense fallback={<p className="id">Loading release identity…</p>}>
                 <ReleaseIdentity />
               </Suspense>
             </div>
