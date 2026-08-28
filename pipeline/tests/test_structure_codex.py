@@ -115,8 +115,9 @@ def test_codex_settings_do_not_require_a_deepseek_key() -> None:
     assert settings.backend == "codex"
     assert settings.base_url == "codex://local"
 
+    assert StructureSettings.from_env({}).backend == "codex"
     with pytest.raises(PipelineError, match="DEEPSEEK_API_KEY"):
-        StructureSettings.from_env({})
+        StructureSettings.from_env({"OPENACTS_MODEL_BACKEND": "deepseek"})
 
 
 def test_event_error_reads_the_failure_codex_reports_on_stdout() -> None:

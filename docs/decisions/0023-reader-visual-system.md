@@ -1,11 +1,11 @@
-# 0023 — Reader visual system
+# 0023 - Reader visual system
 
 **Status:** Accepted
 **Date:** 20 August 2026
 
 ## Context
 
-[`docs/frontend-spec.md`](../frontend-spec.md) §4 states a visual direction — "a
+[`docs/frontend-spec.md`](../frontend-spec.md) §4 states a visual direction - "a
 modern public reference instrument rather than a government facsimile or generic
 application dashboard", restrained Nigerian green as functional accent, a
 provenance rail separated from the wording it qualifies, legal wording with the
@@ -42,7 +42,7 @@ face, which is what gives it visual priority.
 
 Public Sans is retained. It is the United States Web Design System typeface,
 maintained by that design system and derived from Libre Franklin, and it is
-built and tested for public-sector text at small sizes — a settled, accessible
+built and tested for public-sector text at small sizes - a settled, accessible
 standard rather than an untested preference. Roboto Mono is the USWDS monospace
 token and is adopted with it, which makes the identifier role a deliberate
 choice instead of the ad-hoc stock `font-mono` currently used for revisions and
@@ -98,7 +98,7 @@ The left carries orientation: on a Provision page, the siblings sharing its
 parent, with the current one marked and a link up to that parent. The Act
 endpoint does not return siblings, so they are derived from the Act outline.
 Inside that, the hanging Provision label sits in its own narrow rail, and one
-vertical hairline marks the reading column's left edge — the only persistent
+vertical hairline marks the reading column's left edge - the only persistent
 rule on the page. The Act index uses the same left rail for the year.
 
 Provenance is not a rail. `text_kind`, `status` and `checked_through_date` sit
@@ -110,7 +110,7 @@ with the other into a single verified signal.
 
 Below `64rem` the layout is one ordered column: the sibling list becomes a
 horizontal scrolling strip of labels above the wording, and the hanging labels
-become inline prefixes. One list, two shapes — nothing is duplicated, and
+become inline prefixes. One list, two shapes - nothing is duplicated, and
 nothing is removed at any width.
 
 ### Prohibited
@@ -138,7 +138,7 @@ choice in this repository is reviewable, and gives later routes something to
 conform to rather than re-deriving spacing and hierarchy per page.
 
 The rail is the one deliberate risk. It comes from the vernacular of the subject
-— a statute sets its labels in the margin — rather than from a web template, and
+(a statute sets its labels in the margin) rather than from a web template, and
 it resolves §4's provenance requirement structurally instead of decoratively.
 Spending the boldness there is what allows everything around it to be quiet, and
 removing the cards and pills is what §11.2 asks for directly.
@@ -154,7 +154,7 @@ the built page showed two problems: a Provision gave no visibility into its
 sibling Provisions, and the rail spent the most valuable column on metadata.
 The left is now sibling navigation, and provenance is split between a
 currentness line under the title and a Source footnote under the wording. The
-requirement it serves is unchanged — provenance stays in the identifier face,
+requirement it serves is unchanged - provenance stays in the identifier face,
 visibly separate from the wording, and the two quality axes stay distinct.
 
 ## Least certain

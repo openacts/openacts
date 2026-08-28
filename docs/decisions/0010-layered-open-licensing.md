@@ -1,4 +1,4 @@
-# 0010 — Layered open licensing
+# 0010 - Layered open licensing
 
 **Status:** Accepted
 **Date:** 5 August 2026

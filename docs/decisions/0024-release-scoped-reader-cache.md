@@ -1,4 +1,4 @@
-# 0024 — Release-scoped reader cache
+# 0024 - Release-scoped reader cache
 
 **Status:** Accepted
 **Date:** 20 August 2026
@@ -16,8 +16,8 @@ prevent the reader from caching anything:
 Every reader page therefore calls the API on every request. Decision
 [0008](0008-vercel-frontend-workspace-api.md) puts the frontend on Vercel and the
 API on the Workspace VPS, so each of those calls crosses the internet. Bounding
-the outline query removed most of the *bytes* — a Provision page fell from
-808 KB to 6 KB — but not the round trip.
+the outline query removed most of the *bytes* - a Provision page fell from
+808 KB to 6 KB - but not the round trip.
 
 The corpus does not change between releases. Decisions
 [0014](0014-change-driven-corpus-releases.md) and
@@ -44,7 +44,7 @@ legal text.** That boundary is the decision: this endpoint exists to forget, not
 to serve.
 
 `openacts-projection --execute` calls it after activation commits. A failure to
-reach it is reported as a failure of the activation command, not swallowed — a
+reach it is reported as a failure of the activation command, not swallowed - a
 release that is live in the database but invisible in the reader is exactly the
 state §2 was written to prevent, and it must be loud.
 
@@ -86,7 +86,7 @@ the exception cannot widen.
 
 Deployment gains one required secret shared between the projection tool and the
 frontend. Without it the endpoint refuses every request and the reader will
-serve a stale release after activation — so it is a deployment prerequisite,
+serve a stale release after activation - so it is a deployment prerequisite,
 not an optional hardening step.
 
 The reader now depends on activation completing its purge. That dependency is

@@ -288,17 +288,16 @@ the cached PDF, merges the immutable Source by ID, and creates a previously
 absent Act directory. Updating an existing authored Act remains a separate
 reviewed change rather than an overwrite operation.
 
-## Validate the pipeline against a sandbox corpus
+## Validate the pipeline against several Acts
 
-Pipeline changes are exercised against several real Acts in a sandbox cache that
-is never the authored corpus. The sandbox is an ordinary content-addressed cache
-passed with `--cache-root`, so every stage behaves exactly as it does in normal
-use. Validation never runs promotion, so `corpus/` is unreachable from it.
+Pipeline changes are exercised against several real Acts in the working cache.
+Validation never runs promotion, so `corpus/` is unreachable from it. Point it at
+a different cache with `CACHE=` when a run should not touch the working one.
 
 List the Acts to exercise in a manifest of acquisition requests:
 
 ```sh
-cat sandbox/source-cache/requests/manifest.json
+cat source-cache/requests/manifest.json
 ```
 
 Preview what each Act needs, without network access or model requests:
@@ -329,13 +328,13 @@ make validate-execute
 The report records pages, text layer, planned legal range, whether an operative
 terminator was needed, unit and Provision counts, the audit result, claimed
 against source characters, claimed against source markers, and model usage, for
-each Act in `sandbox/validation-report.json`.
+each Act in `validation-report.json`.
 
-Structure one sandbox extraction on a chosen model backend:
+Structure one extraction on a chosen model backend:
 
 ```sh
-make sandbox-structure BACKEND=codex \
-  EXTRACTION=sandbox/source-cache/extractions/<run>.json
+make structure-execute BACKEND=codex \
+  EXTRACTION=source-cache/extractions/<run>.json
 ```
 
 ### Choosing sources

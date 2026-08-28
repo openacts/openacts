@@ -1,6 +1,6 @@
-# 0013 — Explicit dated Version status
+# 0013 - Explicit dated Version status
 
-**Status:** Superseded by [0017 — As-enacted instruments without an amendment engine](0017-as-enacted-instruments-no-amendment-engine.md)
+**Status:** Superseded by [0017 - As-enacted instruments without an amendment engine](0017-as-enacted-instruments-no-amendment-engine.md)
 **Date:** 5 August 2026
 
 ## Context

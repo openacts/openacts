@@ -867,29 +867,58 @@ def _atomic_write(path: Path, content: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _verdict(
+    provision: dict[str, Any], fidelity: str, provision_id: str | None
+) -> dict[str, Any]:
+    """A named Provision takes the verdict whatever it held before; a whole
+    candidate only lifts records nobody has ruled on yet."""
+    if provision_id is not None:
+        if provision["provision_id"] != provision_id:
+            return provision
+    elif provision["text_fidelity"] != "machine_extracted":
+        return provision
+    return {**provision, "text_fidelity": fidelity}
+
+
+REVIEWED_FIDELITIES = ("single_reviewed", "double_reviewed", "source_conflict")
+
+
 def review(
     candidate_path: Path,
     fidelity: str,
     *,
+    provision_id: str | None = None,
     execute: bool = False,
 ) -> dict[str, Any]:
-    """Preview or atomically record a whole-candidate single review."""
-    if fidelity != "single_reviewed":
+    """Preview or atomically record a review verdict.
+
+    Without a Provision this asserts one fidelity across every machine-extracted
+    record, which is only defensible for a single review of the whole Act. Naming
+    a Provision records that reviewer's verdict on it alone, which is how a
+    finding gets adjudicated.
+    """
+    if provision_id is None and fidelity != "single_reviewed":
         raise PipelineError(
-            "invalid_review_fidelity", "review currently supports single_reviewed"
+            "invalid_review_fidelity",
+            "a whole-candidate review supports single_reviewed; name a Provision "
+            "to record any other verdict",
+        )
+    if provision_id is not None and fidelity not in REVIEWED_FIDELITIES:
+        raise PipelineError(
+            "invalid_review_fidelity",
+            f"a Provision verdict must be one of {list(REVIEWED_FIDELITIES)}",
         )
     act, provisions, sources, _citations, candidate_act_dir = _load_candidate(
         candidate_path
     )
-    before = dict(sorted(Counter(p["text_fidelity"] for p in provisions).items()))
-    reviewed = [
-        (
-            {**provision, "text_fidelity": fidelity}
-            if provision["text_fidelity"] == "machine_extracted"
-            else provision
+    if provision_id is not None and not any(
+        provision["provision_id"] == provision_id for provision in provisions
+    ):
+        raise PipelineError(
+            "unknown_provision", f"{provision_id} is not in this candidate"
         )
-        for provision in provisions
-    ]
+    before = dict(sorted(Counter(p["text_fidelity"] for p in provisions).items()))
+    reviewed = [_verdict(provision, fidelity, provision_id) for provision in provisions]
     changed = sum(
         before_provision["text_fidelity"] != after_provision["text_fidelity"]
         for before_provision, after_provision in zip(provisions, reviewed, strict=True)
@@ -907,6 +936,7 @@ def review(
         "act_id": act["act_id"],
         "source_id": sources[0]["source_id"],
         "target_fidelity": fidelity,
+        "provision_id": provision_id,
         "provision_count": len(provisions),
         "changed_provisions": changed,
         "before_fidelity": before,

@@ -1,0 +1,7 @@
+<!doctype html>
+<title>{% block title %}OpenActs console{% endblock %}</title>
+{% block head %}{% endblock %}
+<h1>{% block heading %}{% endblock %}</h1>
+<p><a href="/">pipeline</a> | <a href="/jobs">jobs</a>
+{% if cache_root %}&middot; cache root <code>{{ cache_root }}</code>{% endif %}</p>
+{% block body %}{% endblock %}

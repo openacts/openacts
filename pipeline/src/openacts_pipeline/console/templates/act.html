@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Describe the Act - OpenActs console{% endblock %}
+{% block heading %}Describe the Act{% endblock %}
+{% block body %}
+<p><code>{{ draft.digest }}</code> - {{ draft.official_title }}</p>
+<p>Everything else is taken from the acquisition receipt: the Source reference,
+publisher, and language. Dates are recorded as <code>not_researched</code> and
+are corrected later by editing the record.</p>
+
+<form method="post" action="/acts">
+<input type="hidden" name="digest" value="{{ draft.digest }}">
+<table border="0" cellpadding="3">
+<tr><td><label for="official_title">Official title</label></td>
+    <td><input id="official_title" name="official_title" size="72" required
+        value="{{ draft.official_title }}"></td></tr>
+<tr><td><label for="short_title">Short title</label></td>
+    <td><input id="short_title" name="short_title" size="46"
+        placeholder="optional, e.g. NITDA Act 2007"></td></tr>
+<tr><td><label for="year">Year</label></td>
+    <td><input id="year" name="year" size="6" required
+        value="{{ draft.year or '' }}"></td></tr>
+<tr><td><label for="number">Gazette number</label></td>
+    <td><input id="number" name="number" size="10" value="{{ draft.number }}">
+    <small>optional; when given it names the Act in the corpus path</small></td></tr>
+<tr><td><label for="slug">Slug</label></td>
+    <td><input id="slug" name="slug" size="30" required value="{{ draft.slug }}">
+    <small>the last segment of the act_id</small></td></tr>
+<tr><td><label for="jurisdiction">Jurisdiction</label></td>
+    <td><input id="jurisdiction" name="jurisdiction" size="20"
+        value="{{ draft.jurisdiction }}"></td></tr>
+<tr><td><label for="text_kind">Text kind</label></td>
+    <td><select id="text_kind" name="text_kind">
+    {% for value in text_kinds %}<option value="{{ value }}">{{ value }}</option>{% endfor %}
+    </select> <small>as published, or a consolidation</small></td></tr>
+<tr><td><label for="status">Status</label></td>
+    <td><select id="status" name="status">
+    {% for value in statuses %}
+    <option value="{{ value }}"{% if value == "unknown" %} selected{% endif %}>{{ value }}</option>
+    {% endfor %}
+    </select></td></tr>
+<tr><td></td><td><button type="submit">Save Act record</button></td></tr>
+</table>
+</form>
+{% endblock %}

@@ -1,6 +1,6 @@
-# 0017 — As-enacted instruments without an amendment engine
+# 0017 - As-enacted instruments without an amendment engine
 
-**Status:** Accepted; the consolidated-text prohibition is superseded by [0020 — Source-declared consolidated Act text](0020-source-declared-consolidated-act-text.md)
+**Status:** Accepted; the consolidated-text prohibition is superseded by [0020 - Source-declared consolidated Act text](0020-source-declared-consolidated-act-text.md)
 **Date:** 6 August 2026
 
 ## Context

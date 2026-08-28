@@ -1,4 +1,4 @@
-# 0005 — Accessible law, not legal information
+# 0005 - Accessible law, not legal information
 
 **Status:** Accepted
 **Date:** 5 August 2026

@@ -1,6 +1,6 @@
-# 0015 — Collision-free Version and Citation identities
+# 0015 - Collision-free Version and Citation identities
 
-**Status:** Superseded by [0018 — Direct Act and Provision corpus](0018-direct-act-provision-corpus.md)
+**Status:** Superseded by [0018 - Direct Act and Provision corpus](0018-direct-act-provision-corpus.md)
 **Date:** 6 August 2026
 
 ## Context

@@ -1,4 +1,4 @@
-# 0003 — Known-law lookup first
+# 0003 - Known-law lookup first
 
 **Status:** Accepted
 **Date:** 5 August 2026

@@ -1,4 +1,4 @@
-# 0022 — Readable Act-scoped Provision routes
+# 0022 - Readable Act-scoped Provision routes
 
 **Status:** Accepted
 **Date:** 20 August 2026
@@ -35,7 +35,7 @@ quotable in a brief, an email, or a footnote.
 
 `idea.md` §2.2 argues this in ranking terms. That overstates it: Google's own
 documentation makes no ranking claim for words in URLs. The durable argument is
-the other one `idea.md` gives — a URL a reader can recognise as a citation they
+the other one `idea.md` gives - a URL a reader can recognise as a citation they
 could quote. For a product whose purpose is verifiable, shareable statutory
 text, that is the property that matters.
 
@@ -85,7 +85,7 @@ known separator rather than as fully opaque, which narrows `frontend-spec.md`
 §3. That is bounded and enforced elsewhere: the separator is already guaranteed
 by `PROVISION_ID_PATTERN`, the API validates every recomposed identifier before
 answering, and a wrong pair is indistinguishable from a missing Provision. The
-alternative — publishing every Provision at a percent-encoded identifier URL —
+alternative, publishing every Provision at a percent-encoded identifier URL,
 trades a quotable public address for a purity the corpus model does not require.
 
 Deferring the title slug keeps this decision to what today's contract already

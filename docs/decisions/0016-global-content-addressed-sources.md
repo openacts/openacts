@@ -1,4 +1,4 @@
-# 0016 — Global content-addressed Source manifest
+# 0016 - Global content-addressed Source manifest
 
 **Status:** Accepted
 **Date:** 6 August 2026

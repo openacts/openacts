@@ -1,6 +1,6 @@
-# 0008 — Vercel frontend and Workspace API
+# 0008 - Vercel frontend and Workspace API
 
-**Status:** Accepted; the database-free API container and container-bundled corpus release are superseded by [0021 — PostgreSQL read projection for the corpus API](0021-postgresql-read-projection.md)
+**Status:** Accepted; the database-free API container and container-bundled corpus release are superseded by [0021 - PostgreSQL read projection for the corpus API](0021-postgresql-read-projection.md)
 **Date:** 5 August 2026
 
 ## Context

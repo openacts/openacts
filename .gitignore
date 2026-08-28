@@ -6,4 +6,5 @@ source-cache/
 __pycache__/
 *.py[cod]
 .env
-sandbox/
+validation-report.json
+acquisition-report.json

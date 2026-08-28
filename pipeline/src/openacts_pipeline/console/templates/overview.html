@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block heading %}OpenActs pipeline{% endblock %}
+{% block body %}
+
+<h2>Add a source</h2>
+<form method="post" action="/sources">
+<table border="0" cellpadding="3">
+<tr><td><label for="url">PDF URL</label></td>
+    <td><input id="url" name="url" size="72" required
+        placeholder="https://nass.gov.ng/documents/download/11251"></td></tr>
+<tr><td><label for="document_title">Document title</label></td>
+    <td><input id="document_title" name="document_title" size="72" required
+        placeholder="Nigeria Revenue Service (Establishment) Act, 2025"></td></tr>
+<tr><td><label for="document_publisher">Publisher</label></td>
+    <td><input id="document_publisher" name="document_publisher" size="46" required
+        value="Federal Republic of Nigeria"></td></tr>
+<tr><td><label for="provider_name">Provider</label></td>
+    <td><input id="provider_name" name="provider_name" size="46" required
+        placeholder="National Assembly of Nigeria"></td></tr>
+<tr><td><label for="source_class">Source class</label></td>
+    <td><select id="source_class" name="source_class">
+    {% for value in source_classes %}
+    <option value="{{ value }}"{% if value == "official_gazette" %} selected{% endif %}>{{ value }}</option>
+    {% endfor %}
+    </select>
+    <button type="submit">Add and acquire</button></td></tr>
+</table>
+</form>
+<p><small>Acquisition starts immediately and the job page opens.
+Prefer the born-digital PDF published by the National Assembly or the
+administering agency.</small></p>
+
+<h2>Pipeline</h2>
+<form method="get" action="/">
+<p><label for="show">Show</label>
+<select id="show" name="show" onchange="this.form.submit()">
+{% for value in filters %}
+<option value="{{ value }}"{% if value == show %} selected{% endif %}>{{ value }}</option>
+{% endfor %}
+</select>
+<noscript><button type="submit">apply</button></noscript>
+</p>
+</form>
+
+{% if not sources %}
+<p>Nothing to show{% if show != "all" %} under &ldquo;{{ show }}&rdquo;{% endif %}.
+{% if show == "all" %}Add a source above to begin.{% endif %}</p>
+{% else %}
+<table border="1" cellpadding="4">
+<tr>
+  <th align="left">Document</th>
+  {% for name in stage_order %}<th>{{ name }}</th>{% endfor %}
+  <th align="left">Next</th>
+</tr>
+{% for source in sources %}
+<tr>
+  <td>{{ source.title }}<br>
+    <small><code>{{ source.digest }}</code>
+    {%- if source.pages %} &middot; {{ source.pages }}pp{% endif %}
+    {%- if source.text_layer %} &middot; {{ source.text_layer }}{% endif %}
+    {%- if source.act_id %} &middot; <code>{{ source.act_id }}</code>{% endif %}</small></td>
+  {% for name in stage_order %}
+  {%- set state = source.status(name) %}
+  <td align="center" title="{{ source.detail.get(name, '') }}">
+    {%- if state == "done" %}&#10003;
+    {%- elif state == "blocked" %}&#10007;
+    {%- elif name == source.next_stage %}&middot;
+    {%- else %}&nbsp;{% endif %}</td>
+  {% endfor %}
+  <td>
+    {%- if source.blocked %}<small>{{ source.blocked }}</small>
+    {%- elif source.in_corpus %}<small>in corpus</small>
+    {%- elif source.next_stage == "review" and source.candidate_name %}
+    <a href="/review/{{ source.candidate_name }}">review</a>
+    {%- elif source.next_stage == "candidate" and not source.act_id %}
+    <a href="/acts/new?digest={{ source.digest }}">describe Act</a>
+    {%- elif source.next_stage %}<a href="/stage/{{ source.next_stage }}">{{ source.next_stage }}</a>
+    {%- else %}&ndash;{% endif %}
+  </td>
+</tr>
+{% if source.detail or source.candidate_name %}
+<tr><td colspan="{{ stage_order | length + 2 }}">
+  <small>
+  {%- for name in stage_order if source.detail.get(name) -%}
+  {{ name }}: {{ source.detail[name] }}{{ " &middot; " | safe if not loop.last }}
+  {%- endfor %}
+  {%- if source.candidate_name %} &middot; <a href="/review/{{ source.candidate_name }}">open review</a>{% endif %}
+  {%- if source.corpus_dir %} &middot; <code>corpus/{{ source.corpus_dir }}</code>{% endif %}
+  </small>
+</td></tr>
+{% endif %}
+{% endfor %}
+</table>
+<p><small>&#10003; reached &middot; &middot; next &middot; &#10007; blocked</small></p>
+{% endif %}
+
+<h2>Stages</h2>
+<ul>
+{% for stage in stages %}
+<li><a href="/stage/{{ stage.name }}">{{ stage.name }}</a> - {{ stage.summary }}
+{%- if stage.writes_corpus %} <b>(writes corpus)</b>{% endif %}</li>
+{% endfor %}
+</ul>
+{% endblock %}

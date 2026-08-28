@@ -1,4 +1,4 @@
-# 0012 — Exact and lexical search through beta
+# 0012 - Exact and lexical search through beta
 
 **Status:** Accepted
 **Date:** 5 August 2026

@@ -1,7 +1,7 @@
 """Run every pipeline stage over a manifest of Acts and report structure fidelity.
 
 The harness is resumable: a stage is skipped when an artifact for the same source
-digest already exists in the sandbox cache, so a rerun only pays for new work.
+digest already exists in the cache, so a rerun only pays for new work.
 """
 
 import argparse

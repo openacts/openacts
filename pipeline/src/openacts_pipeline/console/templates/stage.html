@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ stage.name }} - OpenActs console{% endblock %}
+{% block heading %}{{ stage.name }}{% endblock %}
+{% block body %}
+<p>{{ stage.summary }}</p>
+{% if not inputs %}
+<p>No <code>{{ stage.input_label }}</code> available in
+<code>{{ stage.input_folder }}/</code>.</p>
+{% else %}
+<form method="post" action="/stage/{{ stage.name }}">
+<p><label>{{ stage.input_label }}
+<select name="input" required>
+{% for value, label in inputs %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+</select></label></p>
+{% for param in stage.extra %}
+<p><label>{{ param.label }}
+{% if param.choices %}
+<select name="{{ param.name }}" required>
+{% for choice in param.choices %}<option value="{{ choice }}">{{ choice }}</option>{% endfor %}
+</select>
+{% else %}
+<select name="{{ param.name }}" required>
+{% for value, label in extra_inputs[param.name] %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+</select>
+{% endif %}
+</label></p>
+{% endfor %}
+<p>
+<button name="mode" value="dry-run">dry run</button>
+{% if stage.executable %}<button name="mode" value="execute">execute</button>{% endif %}
+</p>
+</form>
+{% endif %}
+<hr>
+{% if stage.writes_corpus %}
+<p><b>Execute writes to corpus/.</b> It creates an Act directory that did not
+exist and merges the Source by ID.</p>
+{% elif stage.executable %}
+<p><small>Dry run reports what execute would do and writes nothing.</small></p>
+{% else %}
+<p><small>This stage has no separate execute; it always writes its artifact.</small></p>
+{% endif %}
+{% endblock %}

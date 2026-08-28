@@ -10,7 +10,8 @@ from openacts_pipeline.config import (
 
 
 def test_structure_settings_are_typed_and_fail_loudly() -> None:
-    settings = StructureSettings.from_env({"DEEPSEEK_API_KEY": "secret"})
+    deepseek = {"OPENACTS_MODEL_BACKEND": "deepseek", "DEEPSEEK_API_KEY": "secret"}
+    settings = StructureSettings.from_env(deepseek)
 
     assert settings.api_key == "secret"
     assert settings.base_url == DEFAULT_DEEPSEEK_BASE_URL
@@ -21,22 +22,19 @@ def test_structure_settings_are_typed_and_fail_loudly() -> None:
     assert settings.max_total_tokens == 2_000_000
 
     with pytest.raises(PipelineError) as missing:
-        StructureSettings.from_env({})
+        StructureSettings.from_env({"OPENACTS_MODEL_BACKEND": "deepseek"})
     assert missing.value.code == "missing_model_api_key"
 
     with pytest.raises(PipelineError) as invalid:
         StructureSettings.from_env(
-            {
-                "DEEPSEEK_API_KEY": "secret",
-                "OPENACTS_STRUCTURE_TIMEOUT_SECONDS": "never",
-            }
+            {**deepseek, "OPENACTS_STRUCTURE_TIMEOUT_SECONDS": "never"}
         )
     assert invalid.value.code == "invalid_configuration"
 
     with pytest.raises(PipelineError) as invalid_concurrency:
         StructureSettings.from_env(
             {
-                "DEEPSEEK_API_KEY": "secret",
+                **deepseek,
                 "OPENACTS_STRUCTURE_CONCURRENCY": "0",
             }
         )
@@ -56,3 +54,20 @@ def test_projection_settings_require_and_hide_the_database_url() -> None:
     with pytest.raises(PipelineError) as missing:
         ProjectionSettings.from_env({})
     assert missing.value.code == "missing_projection_database_url"
+
+
+def test_a_slow_backend_raises_the_default_timeout_it_needs() -> None:
+    """codex passes routinely outrun the shared 300s default."""
+    codex = StructureSettings.from_env({})
+    assert codex.backend == "codex"
+    assert codex.request_timeout_seconds == 900
+
+    deepseek = StructureSettings.from_env(
+        {"OPENACTS_MODEL_BACKEND": "deepseek", "DEEPSEEK_API_KEY": "secret"}
+    )
+    assert deepseek.request_timeout_seconds == 300
+
+    explicit = StructureSettings.from_env(
+        {"OPENACTS_STRUCTURE_TIMEOUT_SECONDS": "120"}
+    )
+    assert explicit.request_timeout_seconds == 120

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ job.stage }} job - OpenActs console{% endblock %}
+{% block heading %}{{ job.stage }} - {{ job.status }}{% endblock %}
+{% block body %}
+<p><code>{{ command }}</code></p>
+<p>job <code>{{ job.job_id }}</code>
+{%- if job.execute %} &middot; <b>execute</b>{% else %} &middot; dry run{% endif %}
+{%- if job.running %} &middot; <form method="post" action="/jobs/{{ job.job_id }}/stop"
+style="display:inline"><button>stop</button></form>{% endif %}</p>
+
+<h2>progress</h2>
+{% if events %}
+<pre id="progress">{% for event in events %}{{ event }}
+{% endfor %}</pre>
+{% else %}
+<pre id="progress"></pre>
+<p><small>{% if job.running %}No progress reported yet.{% else %}This stage
+reported no progress. Only structuring does; the others finish in seconds.
+{% endif %}</small></p>
+{% endif %}
+
+<h2>result</h2>
+<pre id="result">{{ result or "(none yet)" }}</pre>
+
+{% if job.running %}
+<script>
+  const progress = document.getElementById("progress");
+  const stream = new EventSource("/jobs/{{ job.job_id }}/events");
+  stream.addEventListener("progress", (event) => {
+    progress.textContent += event.data + "\n";
+    window.scrollTo(0, document.body.scrollHeight);
+  });
+  // The stage has exited; reload once so the result and controls are correct.
+  stream.addEventListener("done", () => { stream.close(); location.reload(); });
+</script>
+{% endif %}
+{% endblock %}

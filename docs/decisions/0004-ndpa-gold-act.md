@@ -1,4 +1,4 @@
-# 0004 — NDPA as the gold Act
+# 0004 - NDPA as the gold Act
 
 **Status:** Accepted
 **Date:** 5 August 2026

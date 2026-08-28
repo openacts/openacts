@@ -294,3 +294,60 @@ def test_promotion_rejects_a_truncated_candidate(tmp_path: Path) -> None:
         promote(candidate_path, cache_root=cache_root)
     assert error.value.code == "candidate_integrity_failed"
     assert str(error.value) == "expected 14 provisions, found 3"
+
+
+def test_review_records_one_provision_without_touching_the_rest(
+    tmp_path: Path,
+) -> None:
+    """A reviewer adjudicates a finding against one Provision, not a whole Act."""
+    cache_root, structure, act_path = _pipeline(tmp_path)
+    created = candidate(structure, act_path, cache_root=cache_root)
+    candidate_path = cache_root / created["candidate_path"]
+    provisions_path = next(candidate_path.glob("**/provisions.jsonl"))
+    target = "ng-federal-act-2023-37:section-1"
+
+    preview = review(candidate_path, "source_conflict", provision_id=target)
+    assert preview["status"] == "ready"
+    assert preview["changed_provisions"] == 1
+    assert preview["after_fidelity"] == {
+        "machine_extracted": 13,
+        "source_conflict": 1,
+    }
+
+    review(candidate_path, "source_conflict", provision_id=target, execute=True)
+    recorded = [json.loads(line) for line in provisions_path.read_text().splitlines()]
+    verdicts = {record["provision_id"]: record["text_fidelity"] for record in recorded}
+    assert verdicts[target] == "source_conflict"
+    assert set(verdicts.values()) == {"machine_extracted", "source_conflict"}
+
+
+def test_a_per_provision_verdict_may_be_any_reviewed_value(tmp_path: Path) -> None:
+    cache_root, structure, act_path = _pipeline(tmp_path)
+    candidate_path = cache_root / candidate(
+        structure, act_path, cache_root=cache_root
+    )["candidate_path"]
+    target = "ng-federal-act-2023-37:section-1"
+    for verdict in ("single_reviewed", "double_reviewed", "source_conflict"):
+        result = review(candidate_path, verdict, provision_id=target, execute=True)
+        assert result["status"] == "success"
+
+
+def test_a_whole_candidate_review_still_refuses_anything_but_single(
+    tmp_path: Path,
+) -> None:
+    """Asserting double review across an Act nobody read twice is not a thing."""
+    cache_root, structure, act_path = _pipeline(tmp_path)
+    candidate_path = cache_root / candidate(
+        structure, act_path, cache_root=cache_root
+    )["candidate_path"]
+    with pytest.raises(PipelineError, match="single_reviewed"):
+        review(candidate_path, "double_reviewed")
+
+
+def test_an_unknown_provision_is_refused(tmp_path: Path) -> None:
+    cache_root, structure, act_path = _pipeline(tmp_path)
+    candidate_path = cache_root / candidate(
+        structure, act_path, cache_root=cache_root
+    )["candidate_path"]
+    with pytest.raises(PipelineError, match="not in this candidate"):
+        review(candidate_path, "single_reviewed", provision_id="ng-federal-act:nope")
