@@ -1,4 +1,4 @@
-.PHONY: setup dev db-up db-down ocr-setup ocr-setup-execute test lint check api-check api-run web-check web-run integration-test acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection projection-execute
+.PHONY: validate validate-acquire validate-execute sandbox-structure setup dev db-up db-down ocr-setup ocr-setup-execute test lint check api-check api-run web-check web-run integration-test acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection projection-execute
 
 ifneq (,$(wildcard .env))
 include .env
@@ -113,3 +113,34 @@ projection:
 projection-execute:
 	@test -n "$(RELEASE)" || (echo "RELEASE is required" >&2; exit 2)
 	OPENACTS_PROJECTION_DATABASE_URL="$(OPENACTS_PROJECTION_DATABASE_URL)" uv run --env-file .env --project pipeline openacts-projection "$(RELEASE)" --execute $(if $(filter 1,$(ALLOW_BOOTSTRAP)),--allow-bootstrap)
+
+# codex spends ~90s on a trivial prompt, so the 300s stage default would turn
+# ordinary long passes into spurious model_transient failures.
+BACKEND ?= deepseek
+STRUCTURE_TIMEOUT ?= 900
+
+SANDBOX_CACHE ?= sandbox/source-cache
+MANIFEST ?= $(SANDBOX_CACHE)/requests/manifest.json
+
+validate:
+	uv run --project pipeline python tools/validate.py "$(MANIFEST)" \
+	  --cache-root "$(SANDBOX_CACHE)" --report sandbox/validation-report.json
+
+validate-acquire:
+	uv run --project pipeline python tools/validate.py "$(MANIFEST)" \
+	  --cache-root "$(SANDBOX_CACHE)" --execute --stop-after extract \
+	  --report sandbox/acquisition-report.json
+
+validate-execute:
+	OPENACTS_MODEL_BACKEND="$(BACKEND)" \
+	OPENACTS_STRUCTURE_TIMEOUT_SECONDS="$(STRUCTURE_TIMEOUT)" \
+	uv run --env-file pipeline/.env --project pipeline python tools/validate.py \
+	  "$(MANIFEST)" --cache-root "$(SANDBOX_CACHE)" --execute \
+	  --report sandbox/validation-report.json
+
+sandbox-structure:
+	@test -n "$(EXTRACTION)" || (echo "EXTRACTION is required" >&2; exit 2)
+	OPENACTS_MODEL_BACKEND="$(BACKEND)" \
+	OPENACTS_STRUCTURE_TIMEOUT_SECONDS="$(STRUCTURE_TIMEOUT)" \
+	uv run --env-file pipeline/.env --project pipeline openacts structure \
+	  "$(EXTRACTION)" --execute --cache-root "$(SANDBOX_CACHE)"

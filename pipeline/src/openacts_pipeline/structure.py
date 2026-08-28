@@ -39,8 +39,10 @@ from openacts_pipeline.config import DEFAULT_PRIMARY_MODEL, StructureSettings
 from openacts_pipeline.structure_audit import (
     MARKER_LABEL,
     audit_materialized_provisions,
+    matches_source_closely,
     normalized_source_pages,
 )
+from openacts_pipeline.structure_codex import run_codex
 from openacts_pipeline.structure_prompts import (
     CRITIC_INSTRUCTIONS,
     PLAN_INSTRUCTIONS,
@@ -70,9 +72,9 @@ from openacts_pipeline.structure_schema import (
     validate_table,
 )
 
-STRUCTURE_VERSION = 6
+STRUCTURE_VERSION = 7
 SUPPORTED_EXTRACTION_VERSIONS = {1, 2}
-PROMPT_VERSION = 24
+PROMPT_VERSION = 25
 MAX_OUTPUT_TOKENS = 384_000
 TRANSIENT_MODEL_STATUSES = {408, 429, 500, 502, 503, 504}
 
@@ -161,7 +163,10 @@ PLAN_SCOPE_MARKER = re.compile(
 EXCLUDED_PLAN_HEADING = re.compile(
     r"(?im)^[ \t]*(foreword|preface|arrangement of "
     r"(?:sections|articles|regulations|rules)|table of contents|"
-    r"explanatory (?:memorandum|note))[ \t]*$"
+    r"explanatory (?:memorandum|note)|"
+    # A gazette closes with the bill-schedule appendix, whose numbered table
+    # columns read as addressable markers but carry no enacted text.
+    r"schedule to the .{0,120}?bills?,? *\d{4})[ \t]*$"
 )
 STRUCTURAL_LIST_STYLES = {
     "decimal",
@@ -832,7 +837,10 @@ def _validate_draft(
                 normalized_source = "".join(
                     normalized_pages.get(pdf_page, "") for pdf_page in pdf_pages
                 )
-                if normalized_text not in normalized_source:
+                # Extraction damage is the reviewer's to adjudicate, not a reason
+                # to reject a draft and spend another model pass; the audit records
+                # the exact difference against the provision.
+                if not matches_source_closely(normalized_text, normalized_source):
                     raise PipelineError(
                         "source_text_mismatch",
                         f"{description} at {block_path} is not recoverable from "
@@ -911,6 +919,49 @@ def _work_key(source_id: str, settings: StructureSettings) -> str:
     return f"{source_id.removeprefix('sha256:')[:12]}-{digest}"
 
 
+def _terminator_offset(
+    plan: StructurePlan, final_page: dict[str, Any] | None, issues: list[str]
+) -> int | None:
+    """Locate where operative text stops on the last page of the legal range."""
+    if plan.legal_end_terminator is None:
+        return None
+    if final_page is None:
+        issues.append("operative terminator cites a page outside the extraction")
+        return None
+    occurrences = final_page["text"].count(plan.legal_end_terminator)
+    if occurrences != 1:
+        issues.append(
+            f"operative terminator appears {occurrences} times on PDF page "
+            f"{plan.legal_end_pdf_page}; it must appear exactly once"
+        )
+        return None
+    return final_page["text"].index(plan.legal_end_terminator)
+
+
+def _below_terminator(
+    plan: StructurePlan,
+    page: dict[str, Any],
+    offset: int,
+    terminator_offset: int | None,
+) -> bool:
+    return (
+        terminator_offset is not None
+        and page["pdf_page"] == plan.legal_end_pdf_page
+        and offset >= terminator_offset
+    )
+
+
+def _has_operative_marker(text: str) -> bool:
+    """Whether markers on a page belong to the Act rather than publishing matter.
+
+    Markers above an excluded heading are still the Act's own, so only what
+    follows the heading is discounted.
+    """
+    heading = EXCLUDED_PLAN_HEADING.search(text)
+    limit = heading.start() if heading else len(text)
+    return any(match.start() < limit for match in PLAN_SCOPE_MARKER.finditer(text))
+
+
 def _validate_plan(plan: StructurePlan, pages: list[dict[str, Any]]) -> None:
     page_count = len(pages)
     if len(plan.units) > 64:
@@ -944,12 +995,23 @@ def _validate_plan(plan: StructurePlan, pages: list[dict[str, Any]]) -> None:
             # above the next root's heading.
             previous.end_pdf_page = unit.start_pdf_page
     issues: list[str] = []
+    final_page = next(
+        (page for page in pages if page["pdf_page"] == plan.legal_end_pdf_page), None
+    )
+    terminator_offset = _terminator_offset(plan, final_page, issues)
     for page in pages:
         if not (
             plan.legal_start_pdf_page <= page["pdf_page"] <= plan.legal_end_pdf_page
         ):
             continue
-        excluded_heading = EXCLUDED_PLAN_HEADING.search(page["text"])
+        excluded_heading = next(
+            (
+                match
+                for match in EXCLUDED_PLAN_HEADING.finditer(page["text"])
+                if not _below_terminator(plan, page, match.start(), terminator_offset)
+            ),
+            None,
+        )
         if excluded_heading:
             issues.append(
                 f"planned legal range includes excluded "
@@ -962,12 +1024,21 @@ def _validate_plan(plan: StructurePlan, pages: list[dict[str, Any]]) -> None:
         if not (
             plan.legal_start_pdf_page <= page["pdf_page"] <= plan.legal_end_pdf_page
         )
-        and PLAN_SCOPE_MARKER.search(page["text"])
+        and _has_operative_marker(page["text"])
     ]
+    if (
+        terminator_offset is not None
+        and final_page is not None
+        and any(
+            match.start() >= terminator_offset
+            for match in PLAN_SCOPE_MARKER.finditer(final_page["text"])
+        )
+    ):
+        outside_markers.append(final_page["pdf_page"])
     if outside_markers:
         issues.append(
             "addressable legal markers fall outside the planned legal range on PDF "
-            f"pages {outside_markers[:10]}"
+            f"pages {sorted(outside_markers)[:10]}"
         )
     first_unit = plan.units[0]
     last_unit = plan.units[-1]
@@ -1191,6 +1262,8 @@ def structure(
         }
 
     active_settings = settings or StructureSettings.from_env()
+    if active_settings.backend == "codex" and primary_runner is _run_primary:
+        primary_runner = run_codex
     started_at = utc_now()
     work_key = _work_key(extraction["source_id"], active_settings)
     if progress is not None:
@@ -1288,6 +1361,7 @@ def structure(
             pages=extraction["pages"],
             legal_start_pdf_page=workflow.plan.legal_start_pdf_page,
             legal_end_pdf_page=workflow.plan.legal_end_pdf_page,
+            legal_end_terminator=workflow.plan.legal_end_terminator,
         )
         if progress is not None:
             progress(
@@ -1307,17 +1381,19 @@ def structure(
                 cache_root,
                 {
                     "stage": "structure_audit",
-                    "status": "failure",
+                    "status": "review" if final_audit.reviewable else "failure",
                     "source_id": extraction["source_id"],
                     "report": final_audit.model_dump(mode="json"),
                 },
                 audit_path,
             )
-            raise PipelineError(
-                "structure_audit_failed",
-                f"materialized structure failed {len(final_audit.issues)} audit "
-                f"checks; audit: {audit_path.as_posix()}",
-            )
+            if not final_audit.reviewable:
+                raise PipelineError(
+                    "structure_audit_failed",
+                    f"materialized structure accounted for only "
+                    f"{final_audit.source_coverage:.1%} of the source; "
+                    f"audit: {audit_path.as_posix()}",
+                )
 
         pass_records = workflow.pass_records
         usage = {
@@ -1347,6 +1423,9 @@ def structure(
             "claimed_source_characters": final_audit.claimed_characters,
             "source_markers": final_audit.source_markers,
             "claimed_source_markers": final_audit.claimed_markers,
+            "review_findings": len(final_audit.issues),
+            "source_variances": len(final_audit.variances),
+            "varying_characters": final_audit.varying_characters,
         }
         artifact = {
             "stage": "structure",

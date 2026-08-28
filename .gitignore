@@ -6,3 +6,4 @@ source-cache/
 __pycache__/
 *.py[cod]
 .env
+sandbox/

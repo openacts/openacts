@@ -497,9 +497,18 @@ def acquire(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="openacts")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--cache-root",
+        type=Path,
+        default=DEFAULT_CACHE_ROOT,
+        help="content-addressed cache to read and write (default: ./source-cache)",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
     acquire_parser = subparsers.add_parser(
-        "acquire", help="download and fingerprint one approved PDF"
+        "acquire",
+        parents=[common],
+        help="download and fingerprint one approved PDF",
     )
     acquire_parser.add_argument("request", type=Path)
     acquire_parser.add_argument(
@@ -508,15 +517,21 @@ def main(argv: list[str] | None = None) -> int:
         help="perform network access and write the local cache",
     )
     classify_parser = subparsers.add_parser(
-        "classify", help="measure cached PDF text coverage"
+        "classify",
+        parents=[common],
+        help="measure cached PDF text coverage",
     )
     classify_parser.add_argument("receipt", type=Path)
     extract_parser = subparsers.add_parser(
-        "extract", help="extract classified pages with native text and OCR"
+        "extract",
+        parents=[common],
+        help="extract classified pages with native text and OCR",
     )
     extract_parser.add_argument("classification", type=Path)
     ocr_setup_parser = subparsers.add_parser(
-        "ocr-setup", help="inspect or download the pinned PaddleOCR models"
+        "ocr-setup",
+        parents=[common],
+        help="inspect or download the pinned PaddleOCR models",
     )
     ocr_setup_parser.add_argument(
         "--execute",
@@ -524,7 +539,9 @@ def main(argv: list[str] | None = None) -> int:
         help="download missing models into the local cache",
     )
     structure_parser = subparsers.add_parser(
-        "structure", help="infer a reviewable hierarchy from extracted text"
+        "structure",
+        parents=[common],
+        help="infer a reviewable hierarchy from extracted text",
     )
     structure_parser.add_argument("extraction", type=Path)
     structure_parser.add_argument(
@@ -533,12 +550,16 @@ def main(argv: list[str] | None = None) -> int:
         help="perform model API requests and write the local draft",
     )
     candidate_parser = subparsers.add_parser(
-        "candidate", help="materialize a corpus-shaped review candidate"
+        "candidate",
+        parents=[common],
+        help="materialize a corpus-shaped review candidate",
     )
     candidate_parser.add_argument("structure", type=Path)
     candidate_parser.add_argument("act", type=Path)
     review_parser = subparsers.add_parser(
-        "review", help="preview or record a whole-candidate single review"
+        "review",
+        parents=[common],
+        help="preview or record a whole-candidate single review",
     )
     review_parser.add_argument("candidate", type=Path)
     review_parser.add_argument("fidelity", choices=("single_reviewed",))
@@ -548,7 +569,9 @@ def main(argv: list[str] | None = None) -> int:
         help="atomically update machine-extracted candidate provisions",
     )
     promote_parser = subparsers.add_parser(
-        "promote", help="validate or promote a reviewed corpus candidate"
+        "promote",
+        parents=[common],
+        help="validate or promote a reviewed corpus candidate",
     )
     promote_parser.add_argument("candidate", type=Path)
     promote_parser.add_argument(
@@ -560,27 +583,29 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "acquire":
-            result = acquire(args.request, execute=args.execute)
+            result = acquire(
+                args.request, execute=args.execute, cache_root=args.cache_root
+            )
         elif args.command == "classify":
-            result = classify(args.receipt, cache_root=DEFAULT_CACHE_ROOT)
+            result = classify(args.receipt, cache_root=args.cache_root)
         elif args.command == "extract":
-            result = extract(args.classification, cache_root=DEFAULT_CACHE_ROOT)
+            result = extract(args.classification, cache_root=args.cache_root)
         elif args.command == "ocr-setup":
             result = setup_ocr_models(
-                cache_root=DEFAULT_CACHE_ROOT, execute=args.execute
+                cache_root=args.cache_root, execute=args.execute
             )
         elif args.command == "structure":
             result = structure(
                 args.extraction,
                 execute=args.execute,
-                cache_root=DEFAULT_CACHE_ROOT,
+                cache_root=args.cache_root,
                 progress=_print_progress if args.execute else None,
             )
         elif args.command == "candidate":
             result = candidate(
                 args.structure,
                 args.act,
-                cache_root=DEFAULT_CACHE_ROOT,
+                cache_root=args.cache_root,
             )
         elif args.command == "review":
             result = review(
@@ -592,7 +617,7 @@ def main(argv: list[str] | None = None) -> int:
             result = promote(
                 args.candidate,
                 execute=args.execute,
-                cache_root=DEFAULT_CACHE_ROOT,
+                cache_root=args.cache_root,
             )
     except PipelineError as exc:
         print(

@@ -165,6 +165,14 @@ front matter and must remain outside the legal range.
 When the next top-level root begins partway down a page after wording belonging
 to the preceding root, both units must include that shared boundary page.
 
+When operative text ends partway down the last page of the legal range and
+publishing matter such as an authentication certificate or explanatory
+memorandum follows it on that same page, keep the page in the legal range and
+set legal_end_terminator to the exact printed wording that starts the first
+non-operative line. Copy it verbatim from the page and make it long enough to
+occur exactly once there. Omit legal_end_terminator when the legal range ends
+at a page break.
+
 display_label and heading are optional exact source-facing fields. Include one
 only when that complete label or heading is visibly printed on the unit's
 starting page. Never summarize, paraphrase, or combine headings from child

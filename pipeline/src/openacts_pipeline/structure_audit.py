@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import bisect
+import difflib
 import re
 import unicodedata
 from collections import Counter, defaultdict
@@ -29,7 +30,36 @@ PAREN_MARKER_RUN = re.compile(
     r"((?:\((?:\d+[a-z]?|[a-z]+|[ivxlcdm]+)[ \t]*\)[ \t]*)+)",
     re.IGNORECASE,
 )
+# Gazettes print cross-references in the margin without brackets, and the column
+# is narrow enough to split one reference over several lines. Only a line that is
+# wholly a reference counts; the same words inside a sentence are operative text.
+EDITORIAL_REFERENCE_LINE = re.compile(
+    r"(?ix)^\s*(?:"
+    r"(?:(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+)?"
+    r"schedules?(?:\s+section\s+\d+\s*(?:\([^)]*\)\s*)*)?"
+    r"|acts?\s+no\.?\s*\d+\s*[,.]?"
+    r"|cap\.?\s*[a-z]?\s*\d+\s*(?:lfn)?\s*[,.]?"
+    r"|lfn\s*[,.]?\s*(?:\d{4})?\s*[,.]?"
+    r"|section\s+\d+\s*(?:\([^)]*\)\s*)*[,.]?"
+    r")\s*[,.]?\s*$"
+)
+# A bare year only continues a reference the previous line already began.
+EDITORIAL_REFERENCE_CONTINUATION = re.compile(r"^\s*\d{4}\s*[,.]?\s*$")
 PAREN_MARKER = re.compile(r"\((?:\d+[a-z]?|[a-z]+|[ivxlcdm]+)[ \t]*\)", re.IGNORECASE)
+
+# Source the draft never claimed is a question for the reviewer, not a reason to
+# throw the run away. A run that accounts for almost nothing is a different thing:
+# that is a broken structuring, and no reviewer should be handed it.
+MINIMUM_REVIEW_COVERAGE = 0.95
+
+# A claim may differ from source only where extraction damaged it. Source-only
+# text is an artifact the draft correctly left out - a margin note flattened into
+# the sentence - so it is allowed generously. Text the draft adds is invention and
+# stays tightly capped, which is what keeps the gate meaningful.
+NEAR_MATCH_RATIO = 0.90
+NEAR_MATCH_MAX_SOURCE_ONLY = 40
+NEAR_MATCH_MAX_DRAFT_ONLY = 4
+NEAR_MATCH_MIN_LENGTH = 40
 
 
 class AuditIssue(BaseModel):
@@ -52,11 +82,32 @@ class AuditIssue(BaseModel):
 class AuditExclusion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    reason: Literal["printed_page_number", "recurring_header", "editorial_annotation"]
+    reason: Literal[
+        "printed_page_number",
+        "recurring_header",
+        "editorial_annotation",
+        "post_operative_matter",
+    ]
     pdf_page: int
     source_line: int
     source_excerpt: str
     normalized_characters: int = Field(ge=0)
+
+
+class AuditVariance(BaseModel):
+    """Source a claim matched except where extraction damaged it.
+
+    Recorded for the reviewer rather than blocking completion, because the draft
+    is usually right and the extraction wrong.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pdf_page: int
+    source_line: int
+    source_excerpt: str
+    draft_excerpt: str
+    varying_characters: int = Field(ge=0)
 
 
 class AuditReport(BaseModel):
@@ -70,8 +121,21 @@ class AuditReport(BaseModel):
     excluded_characters: int = Field(ge=0)
     source_markers: int = Field(ge=0)
     claimed_markers: int = Field(ge=0)
+    varying_characters: int = Field(default=0, ge=0)
     issues: list[AuditIssue]
     exclusions: list[AuditExclusion] = Field(default_factory=list)
+    variances: list[AuditVariance] = Field(default_factory=list)
+
+    @property
+    def source_coverage(self) -> float:
+        if not self.source_characters:
+            return 1.0
+        return self.claimed_characters / self.source_characters
+
+    @property
+    def reviewable(self) -> bool:
+        """Complete enough to hand a reviewer, even with findings outstanding."""
+        return self.source_coverage >= MINIMUM_REVIEW_COVERAGE
 
 
 @dataclass(frozen=True)
@@ -100,6 +164,7 @@ class _PageLedger:
     markers: list[_Marker]
     excluded_characters: int
     exclusions: list[AuditExclusion]
+    variances: list[AuditVariance]
 
     def line_for_raw_offset(self, raw_offset: int) -> int:
         return bisect.bisect_right(self.line_starts, raw_offset)
@@ -139,19 +204,42 @@ def _recurring_headers(pages: list[dict[str, Any]]) -> set[str]:
     for page in pages:
         for _, _, line in _line_ranges(page["text"])[:4]:
             signature = _header_signature(line)
-            if len(signature) >= 20:
+            if len(signature) >= 8:
                 candidates[signature] += 1
     # Alternating left/right Gazette headers form two recurring signatures.
     minimum = max(3, (len(pages) + 4) // 5)
-    return {line for line, count in candidates.items() if count >= minimum}
+    # A short line carries little evidence on its own, so it counts as furniture
+    # only when it is printed on nearly every page, as a copyright notice is.
+    short_minimum = max(3, (len(pages) * 4) // 5)
+    return {
+        line
+        for line, count in candidates.items()
+        if count >= (minimum if len(line) >= 20 else short_minimum)
+    }
 
 
 def _excluded_offsets(
-    text: str, recurring_headers: set[str], pdf_page: int
+    text: str,
+    recurring_headers: set[str],
+    pdf_page: int,
+    terminator_offset: int | None = None,
 ) -> tuple[bytearray, list[AuditExclusion]]:
     excluded = bytearray(len(text))
     exclusions: list[AuditExclusion] = []
     ranges = _line_ranges(text)
+    if terminator_offset is not None:
+        excluded[terminator_offset:] = b"\x01" * (len(text) - terminator_offset)
+        exclusions.append(
+            AuditExclusion(
+                reason="post_operative_matter",
+                pdf_page=pdf_page,
+                source_line=bisect.bisect_right(
+                    [start for start, _, _ in ranges], terminator_offset
+                ),
+                source_excerpt=" ".join(text[terminator_offset:].split())[:240],
+                normalized_characters=len(_normalized(text[terminator_offset:])),
+            )
+        )
     first_nonblank = next(
         (index for index, (_, _, line) in enumerate(ranges) if line.strip()), None
     )
@@ -260,14 +348,26 @@ def _source_markers(raw_text: str, raw_offsets: list[int]) -> list[_Marker]:
 
 
 def _build_ledgers(
-    pages: list[dict[str, Any]], start_page: int, end_page: int
+    pages: list[dict[str, Any]],
+    start_page: int,
+    end_page: int,
+    terminator: str | None = None,
 ) -> dict[int, _PageLedger]:
     scoped = [page for page in pages if start_page <= page["pdf_page"] <= end_page]
     headers = _recurring_headers(scoped)
     ledgers: dict[int, _PageLedger] = {}
     for page in scoped:
         raw_text = page["text"]
-        excluded, exclusions = _excluded_offsets(raw_text, headers, page["pdf_page"])
+        terminator_offset = (
+            raw_text.index(terminator)
+            if terminator is not None
+            and page["pdf_page"] == end_page
+            and raw_text.count(terminator) == 1
+            else None
+        )
+        excluded, exclusions = _excluded_offsets(
+            raw_text, headers, page["pdf_page"], terminator_offset
+        )
         normalized_characters: list[str] = []
         raw_offsets: list[int] = []
         excluded_characters = 0
@@ -290,6 +390,7 @@ def _build_ledgers(
             markers=_source_markers(raw_text, raw_offsets),
             excluded_characters=excluded_characters,
             exclusions=exclusions,
+            variances=[],
         )
     return ledgers
 
@@ -421,7 +522,9 @@ def _claim_marker(claim: _Claim, ledgers: dict[int, _PageLedger]) -> tuple[bool,
     return False, False
 
 
-def _claim_text(claim: _Claim, ledgers: dict[int, _PageLedger]) -> tuple[bool, bool]:
+def _claim_text(
+    claim: _Claim, ledgers: dict[int, _PageLedger], *, allow_near: bool
+) -> tuple[bool, bool]:
     needle = _normalized(claim.text)
     if not needle:
         return True, False
@@ -445,7 +548,101 @@ def _claim_text(claim: _Claim, ledgers: dict[int, _PageLedger]) -> tuple[bool, b
             return True, False
         duplicate = True
         start = position + 1
+    if (
+        allow_near
+        and not duplicate
+        and _claim_near_match(claim, needle, origins, joined, ledgers)
+    ):
+        return True, False
     return False, duplicate
+
+
+def near_source_window(needle: str, haystack: str) -> tuple[int, str, int] | None:
+    """Closest acceptable window of `haystack` for `needle`.
+
+    Returns (start, window, varying characters), or None when the difference is
+    too large to be extraction damage. Shared by the unit validator and the audit
+    so both agree on what counts as close enough.
+    """
+    if len(needle) < NEAR_MATCH_MIN_LENGTH or not haystack:
+        return None
+    matcher = difflib.SequenceMatcher(None, needle, haystack, autojunk=False)
+    anchor = matcher.find_longest_match(0, len(needle), 0, len(haystack))
+    if not anchor.size:
+        return None
+    start = max(0, anchor.b - anchor.a)
+    # Source-only text lengthens the span the claim covers, so the right window
+    # size is not known up front; score each candidate and keep the best.
+    best: tuple[float, int, str] | None = None
+    for slack in (0, 4, 8, 16, NEAR_MATCH_MAX_SOURCE_ONLY):
+        window = haystack[start : start + len(needle) + slack]
+        if not window:
+            continue
+        comparison = difflib.SequenceMatcher(None, window, needle, autojunk=False)
+        source_only = 0
+        draft_only = 0
+        for tag, i1, i2, j1, j2 in comparison.get_opcodes():
+            if tag == "equal":
+                continue
+            source_only += i2 - i1
+            draft_only += j2 - j1
+        if (
+            comparison.ratio() < NEAR_MATCH_RATIO
+            or source_only > NEAR_MATCH_MAX_SOURCE_ONLY
+            or draft_only > NEAR_MATCH_MAX_DRAFT_ONLY
+        ):
+            continue
+        # A one-character substitution reads as one varying character, not two.
+        scored = (comparison.ratio(), -max(source_only, draft_only), window)
+        if best is None or scored[:2] > best[:2]:
+            best = scored
+    if best is None:
+        return None
+    return start, best[2], -best[1]
+
+
+def matches_source_closely(needle: str, haystack: str) -> bool:
+    """Whether normalized text differs from source only by extraction damage."""
+    return needle in haystack or near_source_window(needle, haystack) is not None
+
+
+def _claim_near_match(
+    claim: _Claim,
+    needle: str,
+    origins: list[tuple[int, int]],
+    joined: str,
+    ledgers: dict[int, _PageLedger],
+) -> bool:
+    found = near_source_window(needle, joined)
+    if found is None:
+        return False
+    start, window, varying = found
+    locations = origins[start : start + len(window)]
+    # A neighbouring claim may already hold part of this span. Overlap is not a
+    # reason to reject a close match, so claim only what is still unclaimed.
+    outstanding = [
+        (page, index)
+        for page, index in locations
+        if not ledgers[page].claimed[index]
+    ]
+    if not outstanding:
+        return False
+    for page, index in outstanding:
+        ledgers[page].claimed[index] = 1
+    page_number, first_index = outstanding[0]
+    ledger = ledgers[page_number]
+    raw_offset = ledger.raw_offsets[first_index]
+    line = ledger.line_for_raw_offset(raw_offset)
+    ledger.variances.append(
+        AuditVariance(
+            pdf_page=page_number,
+            source_line=line,
+            source_excerpt=ledger.line_text(line)[:240],
+            draft_excerpt=" ".join(claim.text.split())[:240],
+            varying_characters=varying,
+        )
+    )
+    return True
 
 
 def _audit(
@@ -454,17 +651,35 @@ def _audit(
     pages: list[dict[str, Any]],
     legal_start_pdf_page: int,
     legal_end_pdf_page: int,
+    legal_end_terminator: str | None = None,
 ) -> AuditReport:
-    ledgers = _build_ledgers(pages, legal_start_pdf_page, legal_end_pdf_page)
+    ledgers = _build_ledgers(
+        pages, legal_start_pdf_page, legal_end_pdf_page, legal_end_terminator
+    )
     issues: list[AuditIssue] = []
-    for claim in claims:
+    # A claim's text can occur several times on one page: a margin heading also
+    # appears inside the body sentence it labels. Taking the longest claims first
+    # leaves each shorter claim the occurrence the longer ones did not take.
+    ordered = sorted(
+        claims, key=lambda claim: len(_normalized(claim.text)), reverse=True
+    )
+    # Every claim gets its exact span before any claim is allowed a near match,
+    # so a fuzzy match cannot absorb source another provision still needs.
+    deferred: list[tuple[_Claim, bool]] = []
+    for claim in ordered:
         matched, duplicate = (
             _claim_marker(claim, ledgers)
             if claim.marker_label is not None
-            else _claim_text(claim, ledgers)
+            else _claim_text(claim, ledgers, allow_near=False)
         )
-        if matched:
-            continue
+        if not matched:
+            deferred.append((claim, duplicate))
+    for claim, exact_duplicate in deferred:
+        duplicate = exact_duplicate
+        if claim.marker_label is None:
+            matched, duplicate = _claim_text(claim, ledgers, allow_near=True)
+            if matched:
+                continue
         page = claim.pdf_pages[0] if claim.pdf_pages else None
         issue_code = (
             "duplicate_source_claim"
@@ -516,7 +731,31 @@ def _audit(
                 unclaimed_by_line[
                     ledger.line_for_raw_offset(ledger.raw_offsets[index])
                 ].append(index)
-        for line, indexes in unclaimed_by_line.items():
+        previous_was_reference = False
+        for line in sorted(unclaimed_by_line):
+            indexes = unclaimed_by_line[line]
+            text = ledger.line_text(line)
+            # A margin cross-reference is furniture only where the draft did not
+            # claim it. Judging that after claiming leaves a genuine Schedule
+            # heading, which looks identical, safely in the hands of the draft.
+            is_reference = bool(EDITORIAL_REFERENCE_LINE.match(text)) or (
+                previous_was_reference
+                and bool(EDITORIAL_REFERENCE_CONTINUATION.match(text))
+            )
+            previous_was_reference = is_reference
+            if is_reference:
+                for index in indexes:
+                    ledger.claimed[index] = 1
+                ledger.exclusions.append(
+                    AuditExclusion(
+                        reason="editorial_annotation",
+                        pdf_page=ledger.pdf_page,
+                        source_line=line,
+                        source_excerpt=text[:240],
+                        normalized_characters=len(indexes),
+                    )
+                )
+                continue
             issues.append(
                 AuditIssue(
                     code="missing_source",
@@ -542,7 +781,15 @@ def _audit(
         ),
         source_markers=source_markers,
         claimed_markers=claimed_markers,
+        varying_characters=sum(
+            variance.varying_characters
+            for ledger in ledgers.values()
+            for variance in ledger.variances
+        ),
         issues=issues,
+        variances=[
+            variance for ledger in ledgers.values() for variance in ledger.variances
+        ],
         exclusions=[
             exclusion for ledger in ledgers.values() for exclusion in ledger.exclusions
         ],
@@ -555,12 +802,14 @@ def audit_drafts(
     pages: list[dict[str, Any]],
     legal_start_pdf_page: int,
     legal_end_pdf_page: int,
+    legal_end_terminator: str | None = None,
 ) -> AuditReport:
     return _audit(
         claims=_draft_claims(drafts),
         pages=pages,
         legal_start_pdf_page=legal_start_pdf_page,
         legal_end_pdf_page=legal_end_pdf_page,
+        legal_end_terminator=legal_end_terminator,
     )
 
 
@@ -570,10 +819,12 @@ def audit_materialized_provisions(
     pages: list[dict[str, Any]],
     legal_start_pdf_page: int,
     legal_end_pdf_page: int,
+    legal_end_terminator: str | None = None,
 ) -> AuditReport:
     return _audit(
         claims=_materialized_claims(provisions),
         pages=pages,
         legal_start_pdf_page=legal_start_pdf_page,
         legal_end_pdf_page=legal_end_pdf_page,
+        legal_end_terminator=legal_end_terminator,
     )
