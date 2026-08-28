@@ -1,4 +1,4 @@
-# 0001 — Reader and contribution model
+# 0001 - Reader and contribution model
 
 **Status:** Accepted
 **Date:** 5 August 2026

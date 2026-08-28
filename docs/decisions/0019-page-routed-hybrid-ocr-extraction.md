@@ -1,4 +1,4 @@
-# 0019 — Page-routed hybrid OCR extraction
+# 0019 - Page-routed hybrid OCR extraction
 
 **Status:** Accepted
 

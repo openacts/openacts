@@ -1,4 +1,4 @@
-# 0007 — Next.js and Tailwind frontend
+# 0007 - Next.js and Tailwind frontend
 
 **Status:** Accepted
 **Date:** 5 August 2026

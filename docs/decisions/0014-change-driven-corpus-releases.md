@@ -1,4 +1,4 @@
-# 0014 — Change-driven corpus releases
+# 0014 - Change-driven corpus releases
 
 **Status:** Accepted
 **Date:** 6 August 2026

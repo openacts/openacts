@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Review - {{ candidate.title }}{% endblock %}
+{% block heading %}Review - {{ candidate.title }}{% endblock %}
+{% block body %}
+
+{% macro verdict(provision) %}
+<form method="post" action="/review/{{ candidate.name }}">
+  <input type="hidden" name="provision" value="{{ provision.provision_id }}">
+  <input type="hidden" name="show" value="{{ show }}">
+  verdict:
+  {% for fidelity in fidelities %}
+  <button name="fidelity" value="{{ fidelity }}">{{ fidelity.replace("_", " ") }}</button>
+  {% endfor %}
+</form>
+{% endmacro %}
+
+<p>{{ candidate.provisions | length }} provisions
+{%- for fidelity, count in candidate.counts.items() %} &middot; {{ count }} {{ fidelity }}{% endfor %}
+&middot; {{ candidate.attention | length }} with findings
+&middot; {{ candidate.variance_count }} variance{{ "" if candidate.variance_count == 1 else "s" }}
+{%- if candidate.coverage is not none %} &middot; {{ "%.2f" | format(candidate.coverage * 100) }}% of source claimed{% endif %}</p>
+
+{% if candidate.audit_missing %}
+<p><b>The structure artifact for this candidate is no longer in the cache, so no
+findings can be shown.</b> The Provisions below are listed without them.</p>
+{% endif %}
+
+<p>show:
+{% for name, label in (("attention", "needs attention"), ("unreviewed", "unreviewed"), ("all", "all")) %}
+{%- if name == show %}<b>{{ label }}</b>{% else %}<a href="/review/{{ candidate.name }}?show={{ name }}">{{ label }}</a>{% endif %}
+{%- if not loop.last %} | {% endif %}
+{%- endfor %}
+</p>
+
+{% if candidate.pages %}
+<hr>
+<h2>{{ candidate.page_finding_count }} findings the audit placed on a page, not a Provision</h2>
+<p>These report source text the draft never produced, so no Provision quotes them.
+The Provisions on each page are listed as leads.</p>
+{% for page in candidate.pages %}
+<details>
+  <summary><b>page {{ page.pdf_page }}</b> &middot; {{ page.findings | length }} finding{{ "" if page.findings | length == 1 else "s" }}
+  &middot; {{ page.provisions | length }} provisions on this page</summary>
+  <table border="1" cellpadding="4">
+  <tr><th>finding</th><th>unclaimed source text</th></tr>
+  {% for finding in page.findings %}
+  <tr><td>{{ finding.kind }}<br><small>{{ finding.detail }}</small></td>
+      <td><small>{{ finding.source_excerpt }}</small></td></tr>
+  {% endfor %}
+  </table>
+  <p><small>on this page:
+  {% for provision in page.provisions %}<code>{{ provision.short_id }}</code>{{ "" if loop.last else ", " }}{% endfor %}
+  </small></p>
+</details>
+{% endfor %}
+{% endif %}
+
+<hr>
+<h2>{{ listed | length }} provisions</h2>
+{% if not listed %}
+<p>Nothing to show under this filter.</p>
+{% endif %}
+{% for provision in listed %}
+<details {% if provision.findings %}open{% endif %}>
+  <summary><b>{{ provision.short_id }}</b> - {{ provision.label }}
+  {%- if provision.pdf_pages %} &middot; p{{ provision.pdf_pages | join(", p") }}{% endif %}
+  &middot; {{ provision.text_fidelity }}
+  {%- if provision.findings %} &middot; <b>{{ provision.findings | length }} finding{{ "" if provision.findings | length == 1 else "s" }}</b>
+  {%- else %} &middot; no findings{% endif %}</summary>
+
+  {% for finding in provision.findings %}
+  {% if finding.is_variance %}
+  <table border="1" cellpadding="4">
+  <tr><th width="50%">draft</th><th width="50%">source - p{{ finding.pdf_page }}</th></tr>
+  <tr><td>{{ finding.draft_excerpt }}</td><td>{{ finding.source_excerpt }}</td></tr>
+  </table>
+  <p><small>{{ finding.kind }} &middot; {{ finding.detail }}</small></p>
+  {% else %}
+  <p><small><b>{{ finding.kind }}</b> &middot; {{ finding.detail }}
+  {%- if finding.pdf_page %} &middot; p{{ finding.pdf_page }}{% endif %}</small></p>
+  <p><small>{{ finding.source_excerpt }}</small></p>
+  {% endif %}
+  {% endfor %}
+
+  {% if not provision.findings %}
+  <p>{{ provision.text or "(no text; this Provision carries only a heading)" }}</p>
+  {% endif %}
+  {% if provision.has_table %}<p><small>This Provision contains a table.</small></p>{% endif %}
+  {{ verdict(provision) }}
+</details>
+{% endfor %}
+
+{% if candidate.remaining %}
+<hr>
+<form method="post" action="/review/{{ candidate.name }}">
+  <input type="hidden" name="show" value="{{ show }}">
+  <p>{{ candidate.remaining }} provisions have no verdict recorded.
+  <button name="fidelity" value="single_reviewed">record single reviewed for all remaining</button>
+  </p>
+</form>
+{% else %}
+<hr>
+<p>Every Provision has a verdict. <a href="/stage/promote">promote</a> writes this candidate to the corpus.</p>
+{% endif %}
+{% endblock %}

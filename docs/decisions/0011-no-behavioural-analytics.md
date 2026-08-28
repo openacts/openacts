@@ -1,4 +1,4 @@
-# 0011 — No behavioural analytics
+# 0011 - No behavioural analytics
 
 **Status:** Accepted
 **Date:** 5 August 2026

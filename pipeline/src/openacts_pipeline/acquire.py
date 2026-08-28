@@ -31,7 +31,12 @@ from openacts_pipeline.common import (
     utc_now,
     write_json_result,
 )
-from openacts_pipeline.corpus import candidate, promote, review
+from openacts_pipeline.corpus import (
+    REVIEWED_FIDELITIES,
+    candidate,
+    promote,
+    review,
+)
 from openacts_pipeline.extract import extract
 from openacts_pipeline.ocr import setup_ocr_models
 from openacts_pipeline.structure import structure
@@ -559,10 +564,14 @@ def main(argv: list[str] | None = None) -> int:
     review_parser = subparsers.add_parser(
         "review",
         parents=[common],
-        help="preview or record a whole-candidate single review",
+        help="preview or record a review verdict on a candidate or one Provision",
     )
     review_parser.add_argument("candidate", type=Path)
-    review_parser.add_argument("fidelity", choices=("single_reviewed",))
+    review_parser.add_argument("fidelity", choices=REVIEWED_FIDELITIES)
+    review_parser.add_argument(
+        "--provision",
+        help="record this verdict on one Provision instead of the whole candidate",
+    )
     review_parser.add_argument(
         "--execute",
         action="store_true",
@@ -611,6 +620,7 @@ def main(argv: list[str] | None = None) -> int:
             result = review(
                 args.candidate,
                 args.fidelity,
+                provision_id=args.provision,
                 execute=args.execute,
             )
         else:

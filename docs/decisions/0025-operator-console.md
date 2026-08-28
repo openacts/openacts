@@ -1,4 +1,4 @@
-# 0025 — Local operator console
+# 0025 - Local operator console
 
 **Status:** Proposed
 **Date:** 28 August 2026
@@ -40,10 +40,14 @@ than reimplementing it.
 Progress streams over Server-Sent Events reading the job's progress file, and a
 job's state lives on disk so it survives a console restart.
 
-Only `structure` emits progress today. `extract` emits none, and it is the stage
-where progress matters most: OCR ran for roughly forty-five minutes on a
-forty-seven page scan with nothing to show for it. A console cannot invent that,
-so instrumenting extraction is the second prerequisite.
+Only `structure` emits progress today. `extract` emits none. That was recorded
+here as a second prerequisite on the strength of an OCR run of roughly forty-five
+minutes on a forty-seven page scan. Measuring the sources actually in the cache
+retired it: every extraction completes in under sixteen seconds, the longest
+being a 253-page Act at 15.8s. The slow run was the PLAC scan, which has since
+been removed as an unofficial source, and the only remaining OCR candidate is
+blocked at classification. Extraction is instrumented when a scan re-enters the
+corpus, not before.
 
 The console is a separate application from `api/`. That serves the public reader
 and must never carry a control that writes to `corpus/`. The console binds to
@@ -76,10 +80,13 @@ The console is built in three parts, each useful on its own.
 1. Artifact browser and stage runner. What exists for each Source, what stage it
    has reached, and a form that selects an input rather than pasting a path.
    Depends on nothing.
-2. Job pages, streaming `structure` progress. Extraction joins once it is
-   instrumented.
+2. Job pages, streaming `structure` progress. Extraction joins if it is ever
+   instrumented; the measurement above says it does not need to be.
 3. The review interface. Depends on the review command accepting a
    single-Provision verdict.
+
+All three are built. `openacts review` now takes `--provision`, and the console
+renders findings against the Provisions they concern.
 
 ## Consequences
 
@@ -103,6 +110,18 @@ it compared against, which is plainly enough for a two-character variance and
 plainly not enough for a disputed Schedule, and nobody has yet reviewed an Act
 this way to find out where the line falls. Rendering the PDF page beside the text
 is the obvious answer and is a materially larger build than the rest of phase 3.
+
+Building phase 3 settled one part of that. The audit reports findings against the
+Source, not against the draft, so no artifact links a finding to the Provision a
+reviewer would edit. That link has to be rebuilt in the console, and how well it
+can be depends on the finding: a variance and a claim-derived issue both quote
+the draft's own text, so the Provision containing that quote is found exactly,
+but `missing_source` reports text the draft never produced and nothing in it can
+name a Provision. On the NITDA Act that splits nine issues and five variances
+into seventeen located findings and six that only carry a page. The located ones
+attach to their Provision; the rest are grouped by page with that page's
+Provisions offered as leads. Copying them onto every Provision sharing a page
+instead would have flagged 74 of 229 Provisions for six findings.
 
 Whether a job should be recoverable after the console restarts. Its progress and
 result are on disk and readable, but a subprocess whose parent has gone is no

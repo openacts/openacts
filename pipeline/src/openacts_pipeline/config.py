@@ -12,11 +12,16 @@ DEFAULT_STRUCTURE_TIMEOUT_SECONDS = 300
 DEFAULT_STRUCTURE_CONCURRENCY = 4
 DEFAULT_STRUCTURE_MAX_REPAIR_ROUNDS = 3
 DEFAULT_STRUCTURE_MAX_TOTAL_TOKENS = 2_000_000
-DEFAULT_MODEL_BACKEND = "deepseek"
+DEFAULT_MODEL_BACKEND = "codex"
 DEFAULT_CODEX_REASONING_EFFORT = "low"
 DEFAULT_CODEX_MODEL_LABEL = "codex-default"
 CODEX_BASE_URL = "codex://local"
 MODEL_BACKENDS = frozenset({"deepseek", "codex"})
+
+# codex spends ~90s on a trivial prompt, so the shared default would turn ordinary
+# long passes into spurious model_transient failures. A backend that needs longer
+# than the default says so here, and an explicit timeout still wins.
+BACKEND_TIMEOUT_SECONDS = {"codex": 900}
 
 
 @dataclass(frozen=True)
@@ -76,7 +81,8 @@ class StructureSettings:
             return value
 
         timeout = positive_integer(
-            "OPENACTS_STRUCTURE_TIMEOUT_SECONDS", DEFAULT_STRUCTURE_TIMEOUT_SECONDS
+            "OPENACTS_STRUCTURE_TIMEOUT_SECONDS",
+            BACKEND_TIMEOUT_SECONDS.get(backend, DEFAULT_STRUCTURE_TIMEOUT_SECONDS),
         )
         concurrency = positive_integer(
             "OPENACTS_STRUCTURE_CONCURRENCY", DEFAULT_STRUCTURE_CONCURRENCY

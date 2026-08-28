@@ -1,6 +1,6 @@
-# 0009 — Publisher source and local content-addressed cache
+# 0009 - Publisher source and local content-addressed cache
 
-**Status:** Accepted; Source ownership and manifest placement superseded by [0016 — Global content-addressed Source manifest](0016-global-content-addressed-sources.md)
+**Status:** Accepted; Source ownership and manifest placement superseded by [0016 - Global content-addressed Source manifest](0016-global-content-addressed-sources.md)
 **Date:** 5 August 2026
 **Updated:** 6 August 2026
 

@@ -1,4 +1,4 @@
-# 0020 — Source-declared consolidated Act text
+# 0020 - Source-declared consolidated Act text
 
 **Status:** Accepted
 **Date:** 10 August 2026

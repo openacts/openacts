@@ -1,4 +1,4 @@
-.PHONY: validate validate-acquire validate-execute sandbox-structure setup dev db-up db-down ocr-setup ocr-setup-execute test lint check api-check api-run web-check web-run integration-test acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection projection-execute
+.PHONY: console validate validate-acquire validate-execute setup dev db-up db-down ocr-setup ocr-setup-execute test lint check api-check api-run web-check web-run integration-test acquire acquire-execute classify extract structure structure-execute candidate review review-execute promote promote-execute projection projection-execute
 
 ifneq (,$(wildcard .env))
 include .env
@@ -34,7 +34,7 @@ ocr-setup-execute:
 	uv run --project pipeline --group ocr openacts ocr-setup --execute
 
 test:
-	uv run --project pipeline pytest tests/test_contract.py pipeline/tests
+	uv run --project pipeline --group console pytest tests/test_contract.py pipeline/tests
 
 lint:
 	uv run --project pipeline ruff check pipeline/src pipeline/tests tests/test_contract.py
@@ -81,7 +81,9 @@ structure:
 
 structure-execute:
 	@test -n "$(EXTRACTION)" || (echo "EXTRACTION is required" >&2; exit 2)
-	uv run --env-file pipeline/.env --project pipeline openacts structure "$(EXTRACTION)" --execute
+	$(MODEL_ENV) \
+	uv run --env-file pipeline/.env --project pipeline openacts structure \
+	  "$(EXTRACTION)" --execute
 
 candidate:
 	@test -n "$(STRUCTURE)" || (echo "STRUCTURE is required" >&2; exit 2)
@@ -91,12 +93,14 @@ candidate:
 review:
 	@test -n "$(CANDIDATE)" || (echo "CANDIDATE is required" >&2; exit 2)
 	@test -n "$(FIDELITY)" || (echo "FIDELITY is required" >&2; exit 2)
-	uv run --project pipeline openacts review "$(CANDIDATE)" "$(FIDELITY)"
+	uv run --project pipeline openacts review "$(CANDIDATE)" "$(FIDELITY)" \
+	  $(if $(PROVISION),--provision "$(PROVISION)")
 
 review-execute:
 	@test -n "$(CANDIDATE)" || (echo "CANDIDATE is required" >&2; exit 2)
 	@test -n "$(FIDELITY)" || (echo "FIDELITY is required" >&2; exit 2)
-	uv run --project pipeline openacts review "$(CANDIDATE)" "$(FIDELITY)" --execute
+	uv run --project pipeline openacts review "$(CANDIDATE)" "$(FIDELITY)" \
+	  $(if $(PROVISION),--provision "$(PROVISION)") --execute
 
 promote:
 	@test -n "$(CANDIDATE)" || (echo "CANDIDATE is required" >&2; exit 2)
@@ -114,33 +118,32 @@ projection-execute:
 	@test -n "$(RELEASE)" || (echo "RELEASE is required" >&2; exit 2)
 	OPENACTS_PROJECTION_DATABASE_URL="$(OPENACTS_PROJECTION_DATABASE_URL)" uv run --env-file .env --project pipeline openacts-projection "$(RELEASE)" --execute $(if $(filter 1,$(ALLOW_BOOTSTRAP)),--allow-bootstrap)
 
-# codex spends ~90s on a trivial prompt, so the 300s stage default would turn
-# ordinary long passes into spurious model_transient failures.
-BACKEND ?= deepseek
-STRUCTURE_TIMEOUT ?= 900
+# The backend and the timeout it needs both default in config. Set either to
+# override one run, e.g. BACKEND=deepseek.
+BACKEND ?=
+STRUCTURE_TIMEOUT ?=
+MODEL_ENV = $(if $(BACKEND),OPENACTS_MODEL_BACKEND="$(BACKEND)") \
+  $(if $(STRUCTURE_TIMEOUT),OPENACTS_STRUCTURE_TIMEOUT_SECONDS="$(STRUCTURE_TIMEOUT)")
 
-SANDBOX_CACHE ?= sandbox/source-cache
-MANIFEST ?= $(SANDBOX_CACHE)/requests/manifest.json
+CACHE ?= source-cache
+MANIFEST ?= $(CACHE)/requests/manifest.json
+PORT ?= 8010
 
 validate:
 	uv run --project pipeline python tools/validate.py "$(MANIFEST)" \
-	  --cache-root "$(SANDBOX_CACHE)" --report sandbox/validation-report.json
+	  --cache-root "$(CACHE)" --report validation-report.json
 
 validate-acquire:
 	uv run --project pipeline python tools/validate.py "$(MANIFEST)" \
-	  --cache-root "$(SANDBOX_CACHE)" --execute --stop-after extract \
-	  --report sandbox/acquisition-report.json
+	  --cache-root "$(CACHE)" --execute --stop-after extract \
+	  --report acquisition-report.json
 
 validate-execute:
-	OPENACTS_MODEL_BACKEND="$(BACKEND)" \
-	OPENACTS_STRUCTURE_TIMEOUT_SECONDS="$(STRUCTURE_TIMEOUT)" \
+	$(MODEL_ENV) \
 	uv run --env-file pipeline/.env --project pipeline python tools/validate.py \
-	  "$(MANIFEST)" --cache-root "$(SANDBOX_CACHE)" --execute \
-	  --report sandbox/validation-report.json
+	  "$(MANIFEST)" --cache-root "$(CACHE)" --execute \
+	  --report validation-report.json
 
-sandbox-structure:
-	@test -n "$(EXTRACTION)" || (echo "EXTRACTION is required" >&2; exit 2)
-	OPENACTS_MODEL_BACKEND="$(BACKEND)" \
-	OPENACTS_STRUCTURE_TIMEOUT_SECONDS="$(STRUCTURE_TIMEOUT)" \
-	uv run --env-file pipeline/.env --project pipeline openacts structure \
-	  "$(EXTRACTION)" --execute --cache-root "$(SANDBOX_CACHE)"
+console:
+	uv run --project pipeline --group console openacts-console \
+	  --cache-root "$(CACHE)" --port $(PORT)

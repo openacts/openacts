@@ -1,6 +1,6 @@
-# 0002 — Native, readable, traversable corpus
+# 0002 - Native, readable, traversable corpus
 
-**Status:** Accepted; storage details superseded by [0006 — Hybrid canonical corpus behind a thin read-only API](0006-hybrid-corpus-thin-api.md), Change records superseded by [0017 — As-enacted instruments without an amendment engine](0017-as-enacted-instruments-no-amendment-engine.md), and the record model superseded by [0018 — Direct Act and Provision corpus](0018-direct-act-provision-corpus.md)
+**Status:** Accepted; storage details superseded by [0006 - Hybrid canonical corpus behind a thin read-only API](0006-hybrid-corpus-thin-api.md), Change records superseded by [0017 - As-enacted instruments without an amendment engine](0017-as-enacted-instruments-no-amendment-engine.md), and the record model superseded by [0018 - Direct Act and Provision corpus](0018-direct-act-provision-corpus.md)
 **Date:** 5 August 2026
 
 ## Context

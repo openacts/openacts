@@ -47,7 +47,7 @@ production.
 | `/acts` | `GET /v1/acts` | Paginated Act index |
 | `/acts/[actId]` | `GET /v1/acts/{act_id}`, `GET /v1/acts/{act_id}/contents` | Act identity, status, Sources, and top-level contents |
 | `/acts/[actId]/[provisionPath]` | `GET /v1/provisions/{provision_id}` | Exact legal text, context, Citations, Sources, and navigation |
-| `/provisions/[provisionId]` | — | Identity route; permanently redirects to the Act-scoped Provision route |
+| `/provisions/[provisionId]` | - | Identity route; permanently redirects to the Act-scoped Provision route |
 | `/sources/[sourceId]` | `GET /v1/sources/{source_id}` | Source provenance and recorded retrieval locations |
 
 Provision routes are Act-scoped and readable under
@@ -58,8 +58,8 @@ structure it may assume: it does not parse, order, compare, or derive legal
 meaning from the path, and a pair that does not resolve renders the application
 not-found page. Every other ID stays opaque and percent-encoded.
 
-Every Provision renders whatever content blocks it carries. A container — a
-chapter, part, division, cross-heading, schedule, or schedule part — then lists
+Every Provision renders whatever content blocks it carries. A container - a
+chapter, part, division, cross-heading, schedule, or schedule part - then lists
 its direct children, one level only, instead of rendering the subtree beneath
 it. A section, and everything below a section, renders its descendants as
 continuous legal text.

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block heading %}Jobs{% endblock %}
+{% block body %}
+{% if not jobs %}
+<p>No stage has been run from this console yet.</p>
+{% else %}
+<table border="1" cellpadding="4">
+<tr><th>job</th><th>stage</th><th>mode</th><th>status</th></tr>
+{% for job in jobs %}
+<tr>
+  <td><a href="/jobs/{{ job.job_id }}">{{ job.job_id }}</a></td>
+  <td>{{ job.stage }}</td>
+  <td>{{ "execute" if job.execute else "dry run" }}</td>
+  <td>{{ job.status }}</td>
+</tr>
+{% endfor %}
+</table>
+{% endif %}
+{% endblock %}

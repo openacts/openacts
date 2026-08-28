@@ -1,4 +1,4 @@
-# 0021 — PostgreSQL read projection for the corpus API
+# 0021 - PostgreSQL read projection for the corpus API
 
 **Status:** Accepted
 **Date:** 17 August 2026

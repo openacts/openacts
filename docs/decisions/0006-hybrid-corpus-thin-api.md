@@ -1,6 +1,6 @@
-# 0006 — Hybrid canonical corpus behind a thin read-only API
+# 0006 - Hybrid canonical corpus behind a thin read-only API
 
-**Status:** Accepted; Source placement superseded by [0016 — Global content-addressed Source manifest](0016-global-content-addressed-sources.md), canonical record layout superseded by [0018 — Direct Act and Provision corpus](0018-direct-act-provision-corpus.md), and startup in-memory indexing plus the no-persistent-database restriction superseded by [0021 — PostgreSQL read projection for the corpus API](0021-postgresql-read-projection.md)
+**Status:** Accepted; Source placement superseded by [0016 - Global content-addressed Source manifest](0016-global-content-addressed-sources.md), canonical record layout superseded by [0018 - Direct Act and Provision corpus](0018-direct-act-provision-corpus.md), and startup in-memory indexing plus the no-persistent-database restriction superseded by [0021 - PostgreSQL read projection for the corpus API](0021-postgresql-read-projection.md)
 **Date:** 5 August 2026
 
 ## Context
