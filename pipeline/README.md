@@ -287,3 +287,80 @@ The promotion revalidates every schema and cross-record relationship, rechecks
 the cached PDF, merges the immutable Source by ID, and creates a previously
 absent Act directory. Updating an existing authored Act remains a separate
 reviewed change rather than an overwrite operation.
+
+## Validate the pipeline against a sandbox corpus
+
+Pipeline changes are exercised against several real Acts in a sandbox cache that
+is never the authored corpus. The sandbox is an ordinary content-addressed cache
+passed with `--cache-root`, so every stage behaves exactly as it does in normal
+use. Validation never runs promotion, so `corpus/` is unreachable from it.
+
+List the Acts to exercise in a manifest of acquisition requests:
+
+```sh
+cat sandbox/source-cache/requests/manifest.json
+```
+
+Preview what each Act needs, without network access or model requests:
+
+```sh
+make validate
+```
+
+The dry run reports `needs_download`, `needs_classify`, `needs_extract`, or
+`ready_for_structure` per Act and writes nothing. Acquire and extract every
+listed source, still without model requests:
+
+```sh
+make validate-acquire
+```
+
+Both commands are resumable: a stage is skipped when an artifact for the same
+source digest already exists, so reruns only pay for new work. One Act's stage
+failure is recorded against that Act rather than ending the run, because a
+degraded source must not hide the results for every other Act.
+
+Run the whole manifest through structuring and report structure fidelity:
+
+```sh
+make validate-execute
+```
+
+The report records pages, text layer, planned legal range, whether an operative
+terminator was needed, unit and Provision counts, the audit result, claimed
+against source characters, claimed against source markers, and model usage, for
+each Act in `sandbox/validation-report.json`.
+
+Structure one sandbox extraction on a chosen model backend:
+
+```sh
+make sandbox-structure BACKEND=codex \
+  EXTRACTION=sandbox/source-cache/extractions/<run>.json
+```
+
+### Choosing sources
+
+Prefer the born-digital PDF that the National Assembly or the administering
+agency publishes. Those carry the gazette's own text and pagination with a
+digital text layer. Scanned gazettes carry an OCR text layer whose character
+damage the deterministic audit reports as source mismatches, so classification
+routes them to `manual_review` rather than structuring them silently.
+
+## Select a model backend
+
+The structure stage reaches its model through one pluggable runner, so a backend
+change does not touch the agent graph, checkpoints, audit, or repair logic.
+
+`OPENACTS_MODEL_BACKEND` selects `deepseek` (default) or `codex`. The codex
+backend runs the local `codex exec` CLI, requires no API key, and reports its own
+base URL and model, so its checkpoints never collide with DeepSeek's. Pin its
+model with `OPENACTS_CODEX_MODEL` and its reasoning effort with
+`OPENACTS_CODEX_REASONING_EFFORT` (default `low`).
+
+Each `codex exec` call carries a large fixed system-prompt overhead and takes far
+longer per pass than a direct API request, so raise
+`OPENACTS_STRUCTURE_TIMEOUT_SECONDS` well above the stage default for it. Because
+`--output-schema` is an OpenAI strict response format, the runner rewrites the
+Pydantic schema to list every property as required and drops the validation
+keywords strict mode rejects; the parsed reply is still checked against the
+original model, so no enforcement is lost.

@@ -1621,3 +1621,112 @@ def test_definition_clauses_must_be_structured_as_paragraphs() -> None:
         page_count=1,
         pages=[{"pdf_page": 1, "text": page_text}],
     )
+
+
+BOUNDARY_PAGE_TEXT = (
+    "(c)  take no part in any consideration of the matter ; and\n"
+    "(d)  be absent from the meeting during which the matter is discussed.\n"
+    "18.  If a member of the Council discloses an interest under paragraph\n"
+    "17, the disclosure shall be recorded in the minutes of the meeting.\n"
+    "I, certify, in accordance with section 2 (1) of the Acts Authentication\n"
+    "Act, Cap. A2, that this is a true copy of the Bill passed by both Houses.\n"
+    "EXPLANATORY MEMORANDUM\n"
+    "This Act provides a legal framework for the protection of personal\n"
+    "information.\n"
+)
+BOUNDARY_PAGES = [
+    {"pdf_page": 1, "text": "1. Opening\nComplete opening wording."},
+    {"pdf_page": 2, "text": BOUNDARY_PAGE_TEXT},
+]
+
+
+def _boundary_plan(end_page: int, terminator: str | None = None) -> StructurePlan:
+    payload: dict = {
+        "legal_start_pdf_page": 1,
+        "legal_end_pdf_page": end_page,
+        "units": [
+            {
+                "unit_id": "body",
+                "kind": "body",
+                "start_pdf_page": 1,
+                "end_pdf_page": end_page,
+            }
+        ],
+    }
+    if terminator is not None:
+        payload["legal_end_terminator"] = terminator
+    return StructurePlan.model_validate(payload)
+
+
+def test_operative_text_ending_above_excluded_matter_has_no_page_granular_plan() -> None:
+    with pytest.raises(PipelineError, match="outside the planned legal range"):
+        structure_module._validate_plan(_boundary_plan(1), BOUNDARY_PAGES)
+
+    with pytest.raises(PipelineError, match="excluded explanatory memorandum"):
+        structure_module._validate_plan(_boundary_plan(2), BOUNDARY_PAGES)
+
+
+def test_plan_accepts_excluded_matter_below_the_operative_terminator() -> None:
+    structure_module._validate_plan(
+        _boundary_plan(2, "I, certify, in accordance with"), BOUNDARY_PAGES
+    )
+
+
+def test_plan_rejects_an_operative_terminator_that_is_not_uniquely_locatable() -> None:
+    with pytest.raises(PipelineError, match="operative terminator"):
+        structure_module._validate_plan(
+            _boundary_plan(2, "not present on the page"), BOUNDARY_PAGES
+        )
+
+    with pytest.raises(PipelineError, match="operative terminator"):
+        structure_module._validate_plan(
+            _boundary_plan(2, "the matter"), BOUNDARY_PAGES
+        )
+
+
+def test_plan_rejects_an_operative_terminator_above_remaining_legal_markers() -> None:
+    with pytest.raises(PipelineError, match="outside the planned legal range"):
+        structure_module._validate_plan(
+            _boundary_plan(2, "(d)  be absent"), BOUNDARY_PAGES
+        )
+
+
+def test_plan_ignores_markers_in_the_bill_schedule_appendix() -> None:
+    """A gazette closes with a bill-schedule table whose columns are not markers."""
+    pages = [
+        {"pdf_page": 1, "text": "1. Opening\nComplete opening wording."},
+        {
+            "pdf_page": 2,
+            "text": (
+                "(c)  the final paragraph of the Schedule.\n"
+                "I certify, in accordance with section 2 (1) of the Acts\n"
+                "Authentication Act, that this is a true copy.\n"
+                "EXPLANATORY MEMORANDUM\n"
+                "This Act establishes the Service.\n"
+            ),
+        },
+        {
+            "pdf_page": 3,
+            "text": (
+                "SCHEDULE TO THE NIGERIA REVENUE SERVICE (ESTABLISHMENT) BILL, 2025\n"
+                "(1)\nShort Title\n(2)\nLong Title\n(3)\nSummary\n"
+            ),
+        },
+    ]
+    plan = StructurePlan.model_validate(
+        {
+            "legal_start_pdf_page": 1,
+            "legal_end_pdf_page": 2,
+            "legal_end_terminator": "I certify, in accordance with",
+            "units": [
+                {
+                    "unit_id": "body",
+                    "kind": "body",
+                    "start_pdf_page": 1,
+                    "end_pdf_page": 2,
+                }
+            ],
+        }
+    )
+
+    structure_module._validate_plan(plan, pages)

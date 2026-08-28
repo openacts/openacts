@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepContext
 
 from openacts_pipeline.common import PipelineError, write_json_result
@@ -675,6 +675,7 @@ def _audit_results(
         pages=deps.pages,
         legal_start_pdf_page=plan.legal_start_pdf_page,
         legal_end_pdf_page=plan.legal_end_pdf_page,
+        legal_end_terminator=plan.legal_end_terminator,
     )
     issues = [
         result.validation_issue
@@ -799,6 +800,7 @@ class PlanNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
             plan_revision=ctx.state.plan_revision,
             legal_start_pdf_page=ctx.state.plan.legal_start_pdf_page,
             legal_end_pdf_page=ctx.state.plan.legal_end_pdf_page,
+            legal_end_terminator=ctx.state.plan.legal_end_terminator,
             units=len(ctx.state.plan.units),
             checkpoint_reused=reused,
             latency_seconds=run.latency_seconds,
@@ -872,11 +874,22 @@ class RunUnitsNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
                             structure_version=ctx.deps.structure_version,
                             prompt_version=ctx.deps.prompt_version,
                         )
+                        try:
+                            revalidated = StructureDraft.model_validate(
+                                run.output.model_dump()
+                            )
+                        except ValidationError as exc:
+                            # A draft that will not survive a round trip must not
+                            # reach the graph, and must not abort the whole run.
+                            raise PipelineError(
+                                "model_invalid_output",
+                                f"{unit.unit_id} draft does not revalidate: "
+                                f"{str(exc)[:600]}",
+                                retryable=True,
+                            ) from exc
                         result = UnitResult(
                             unit=unit,
-                            draft=StructureDraft.model_validate(
-                                run.output.model_dump()
-                            ),
+                            draft=revalidated,
                             run=run,
                             pass_name=pass_name,
                             checkpoint_reused=reused,
@@ -1010,9 +1023,20 @@ class AuditNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
         if ctx.state.audit.passed:
             return FinalizeNode()
         if ctx.state.repair_round >= ctx.deps.settings.max_repair_rounds:
+            if ctx.state.audit.reviewable:
+                _emit(
+                    ctx.deps,
+                    "audit_findings_deferred_to_review",
+                    issues=len(ctx.state.audit.issues),
+                    variances=len(ctx.state.audit.variances),
+                    source_coverage=round(ctx.state.audit.source_coverage, 5),
+                )
+                return FinalizeNode()
             raise PipelineError(
                 "structure_audit_failed",
-                f"repair budget exhausted with {len(ctx.state.audit.issues)} issues; "
+                f"structuring accounted for only "
+                f"{ctx.state.audit.source_coverage:.1%} of the source after "
+                f"{ctx.state.repair_round} repair rounds; "
                 f"candidate: {candidate_relative_path.as_posix()}; "
                 f"audit: structure-work/{ctx.deps.work_key}/audit.json",
             )
@@ -1362,9 +1386,10 @@ class FinalizeNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
     ) -> End[WorkflowResult]:
         plan = ctx.state.plan
         report = ctx.state.audit
-        if plan is None or report is None or not report.passed:
+        if plan is None or report is None or not (report.passed or report.reviewable):
             raise PipelineError(
-                "structure_audit_failed", "finish gate requires a clean audit"
+                "structure_audit_failed",
+                "finish gate requires an audit the reviewer can act on",
             )
         drafts = [ctx.state.unit_results[unit.unit_id].draft for unit in plan.units]
         _write_state(ctx.state, ctx.deps, "complete")

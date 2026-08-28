@@ -297,6 +297,7 @@ class StructurePlan(BaseModel):
 
     legal_start_pdf_page: int = Field(ge=1)
     legal_end_pdf_page: int = Field(ge=1)
+    legal_end_terminator: str | None = Field(default=None, min_length=8)
     units: list[StructureUnit] = Field(min_length=1)
 
     @model_validator(mode="after")

@@ -12,6 +12,11 @@ DEFAULT_STRUCTURE_TIMEOUT_SECONDS = 300
 DEFAULT_STRUCTURE_CONCURRENCY = 4
 DEFAULT_STRUCTURE_MAX_REPAIR_ROUNDS = 3
 DEFAULT_STRUCTURE_MAX_TOTAL_TOKENS = 2_000_000
+DEFAULT_MODEL_BACKEND = "deepseek"
+DEFAULT_CODEX_REASONING_EFFORT = "low"
+DEFAULT_CODEX_MODEL_LABEL = "codex-default"
+CODEX_BASE_URL = "codex://local"
+MODEL_BACKENDS = frozenset({"deepseek", "codex"})
 
 
 @dataclass(frozen=True)
@@ -41,14 +46,22 @@ class StructureSettings:
     concurrency: int = DEFAULT_STRUCTURE_CONCURRENCY
     max_repair_rounds: int = DEFAULT_STRUCTURE_MAX_REPAIR_ROUNDS
     max_total_tokens: int = DEFAULT_STRUCTURE_MAX_TOTAL_TOKENS
+    backend: str = DEFAULT_MODEL_BACKEND
+    codex_reasoning_effort: str = DEFAULT_CODEX_REASONING_EFFORT
 
     @classmethod
     def from_env(
         cls, environment: Mapping[str, str] | None = None
     ) -> "StructureSettings":
         values = os.environ if environment is None else environment
+        backend = values.get("OPENACTS_MODEL_BACKEND", DEFAULT_MODEL_BACKEND).strip()
+        if backend not in MODEL_BACKENDS:
+            raise PipelineError(
+                "invalid_configuration",
+                f"OPENACTS_MODEL_BACKEND must be one of {sorted(MODEL_BACKENDS)}",
+            )
         api_key = values.get("DEEPSEEK_API_KEY", "").strip()
-        if not api_key:
+        if backend == "deepseek" and not api_key:
             raise PipelineError("missing_model_api_key", "DEEPSEEK_API_KEY is required")
 
         def positive_integer(name: str, default: int) -> int:
@@ -77,14 +90,30 @@ class StructureSettings:
             DEFAULT_STRUCTURE_MAX_TOTAL_TOKENS,
         )
 
+        # The work key is derived from base_url and primary_model, so the codex
+        # backend must report its own pair or its checkpoints collide with DeepSeek's.
+        if backend == "codex":
+            base_url = CODEX_BASE_URL
+            primary_model = (
+                values.get("OPENACTS_CODEX_MODEL", "").strip()
+                or DEFAULT_CODEX_MODEL_LABEL
+            )
+        else:
+            base_url = values.get(
+                "OPENACTS_DEEPSEEK_BASE_URL", DEFAULT_DEEPSEEK_BASE_URL
+            ).rstrip("/")
+            primary_model = values.get("OPENACTS_PRIMARY_MODEL", DEFAULT_PRIMARY_MODEL)
+
         return cls(
             api_key=api_key,
-            base_url=values.get(
-                "OPENACTS_DEEPSEEK_BASE_URL", DEFAULT_DEEPSEEK_BASE_URL
-            ).rstrip("/"),
-            primary_model=values.get("OPENACTS_PRIMARY_MODEL", DEFAULT_PRIMARY_MODEL),
+            base_url=base_url,
+            primary_model=primary_model,
             request_timeout_seconds=timeout,
             concurrency=concurrency,
             max_repair_rounds=repair_rounds,
             max_total_tokens=max_total_tokens,
+            backend=backend,
+            codex_reasoning_effort=values.get(
+                "OPENACTS_CODEX_REASONING_EFFORT", DEFAULT_CODEX_REASONING_EFFORT
+            ).strip(),
         )
