@@ -20,8 +20,6 @@ MODEL_CHOICES = (
 
 @dataclass(frozen=True)
 class Param:
-    """One extra control on a stage's form, beyond its primary input."""
-
     name: str
     label: str
     folder: str | None = None
