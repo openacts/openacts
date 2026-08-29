@@ -17,6 +17,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from openacts_pipeline.console.registry import BY_NAME
+
 RESULT_FILE = "result.json"
 PROGRESS_FILE = "progress.jsonl"
 COMMAND_FILE = "command.json"
@@ -30,6 +32,13 @@ class Job:
     directory: Path
     execute: bool
     process: subprocess.Popen[bytes] | None = None
+
+    @property
+    def mode(self) -> str:
+        stage = BY_NAME.get(self.stage)
+        if stage is not None and not stage.executable:
+            return "always writes"
+        return "execute" if self.execute else "dry run"
 
     @property
     def started(self) -> str:

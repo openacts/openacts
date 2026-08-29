@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from openacts_pipeline.common import PipelineError, local_clock
-from openacts_pipeline.console import acts, review
+from openacts_pipeline.console import acts, review, state
 from openacts_pipeline.console.app import _summarise, create_app
 from openacts_pipeline.console.jobs import Job
 from openacts_pipeline.console.registry import BY_NAME, artifacts
@@ -929,3 +929,43 @@ def test_a_checked_through_date_must_look_like_a_date() -> None:
             },
             SOURCE_ID,
         )
+
+
+def test_the_classify_dropdown_names_the_document_each_receipt_fetched(
+    tmp_path: Path,
+) -> None:
+    _receipt(tmp_path, "5bfb22cf", "Nigeria Data Protection Act, 2023")
+    _receipt(tmp_path, "39a18d31", "NITDA Act, 2007")
+
+    client = TestClient(create_app(tmp_path, tmp_path))
+    body = client.get("/stage/classify").text
+
+    assert "Nigeria Data Protection Act, 2023" in body
+    assert "NITDA Act, 2007" in body
+
+
+def test_an_artifact_named_for_its_source_still_labels_by_digest(
+    tmp_path: Path,
+) -> None:
+    _receipt(tmp_path, "5bfb22cf", "Nigeria Data Protection Act, 2023")
+    _classification(tmp_path, "5bfb22cf", "born_digital_text", "born_digital")
+
+    names = state.labels(tmp_path)
+    receipt = "20260828T000000Z-fc22bfb5.json"
+    classification = "20260828T000000Z-5bfb22cf-aaaa.json"
+
+    assert state.label_for(receipt, names).startswith("Nigeria Data Protection Act")
+    assert state.label_for(classification, names).startswith(
+        "Nigeria Data Protection Act"
+    )
+    assert state.label_for("nothing-here.json", names) == "nothing-here.json"
+
+
+def test_a_stage_with_no_execute_mode_is_not_called_a_dry_run(tmp_path: Path) -> None:
+    candidate = Job("j1", "candidate", [], tmp_path, execute=False)
+    structure = Job("j2", "structure", [], tmp_path, execute=False)
+
+    assert not BY_NAME["candidate"].executable
+    assert candidate.mode != "dry run"
+    assert structure.mode == "dry run"
+    assert Job("j3", "structure", [], tmp_path, execute=True).mode == "execute"
