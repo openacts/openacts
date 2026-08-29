@@ -33,6 +33,19 @@ def iso_timestamp(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+def local_clock(stamp: str) -> str:
+    """A recorded UTC timestamp as a wall clock reading, for display only.
+
+    Artifacts stay in UTC so the cache sorts and travels. An operator reading
+    progress is comparing it against the clock on their wall, and a bare time
+    with its `Z` dropped silently reads as local when it is not.
+    """
+    try:
+        return datetime.fromisoformat(stamp).astimezone().strftime("%H:%M:%S")
+    except (TypeError, ValueError):
+        return ""
+
+
 def verify_cached_pdf(
     cache_root: Path,
     relative_path: Path,
