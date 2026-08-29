@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 
 from openacts_pipeline.common import PipelineError
-from openacts_pipeline.corpus import candidate, load_corpus, promote, review
+from openacts_pipeline.corpus import (
+    _local_provision_id,
+    candidate,
+    load_corpus,
+    promote,
+    review,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests/fixtures/valid"
@@ -351,3 +357,30 @@ def test_an_unknown_provision_is_refused(tmp_path: Path) -> None:
     )["candidate_path"]
     with pytest.raises(PipelineError, match="not in this candidate"):
         review(candidate_path, "single_reviewed", provision_id="ng-federal-act:nope")
+
+
+def _unlabelled(node_type: str, order: int = 1) -> dict:
+    return {
+        "draft_id": "node-1",
+        "node_type": node_type,
+        "display_label": None,
+        "heading": None,
+        "order": order,
+        "content_blocks": [],
+    }
+
+
+@pytest.mark.parametrize("node_type", ["form", "table", "cross_heading"])
+def test_a_node_named_by_its_parent_is_placed_by_order(node_type: str) -> None:
+    assert (
+        _local_provision_id(_unlabelled(node_type), "schedule-14")
+        == f"schedule-14.{node_type.replace('_', '-')}-unnumbered-1"
+    )
+
+
+@pytest.mark.parametrize(
+    "node_type", ["part", "chapter", "division", "section", "schedule_part"]
+)
+def test_a_node_that_must_carry_a_number_is_still_refused(node_type: str) -> None:
+    with pytest.raises(PipelineError, match="no stable label"):
+        _local_provision_id(_unlabelled(node_type), "part-1")

@@ -415,11 +415,15 @@ def _local_provision_id(
             "subparagraph",
             "schedule_paragraph",
             "schedule_subparagraph",
+            "cross_heading",
+            "table",
+            "form",
         }
     ):
         order = node.get("order")
-        # Printed continuations have no marker; initial sibling order gives them a
-        # readable ID without hashing text that may receive transcription fixes.
+        # Continuations have no marker, and a form or table is often named by the
+        # schedule above it. Sibling order gives both a readable ID without
+        # hashing text that may receive transcription fixes.
         if isinstance(order, int) and not isinstance(order, bool) and order >= 1:
             token = f"unnumbered-{order}"
     if token is None:
