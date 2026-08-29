@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +89,7 @@ def build(values: dict[str, str], source_id: str) -> dict[str, Any]:
     jurisdiction = values.get("jurisdiction", DEFAULT_JURISDICTION).strip()
     text_kind = values.get("text_kind", "as_enacted")
     status = values.get("status", "unknown")
+    checked_through = values.get("checked_through_date", "").strip()
     number = values.get("number", "").strip()
     short = values.get("short_title", "").strip()
 
@@ -99,6 +101,22 @@ def build(values: dict[str, str], source_id: str) -> dict[str, Any]:
         raise PipelineError("invalid_act", f"text_kind must be one of {TEXT_KINDS}")
     if status not in STATUSES:
         raise PipelineError("invalid_act", f"status must be one of {STATUSES}")
+    # `act.schema.json` requires both the date and a source for every status but
+    # `unknown`, which is a state rather than a claim.
+    if status != "unknown":
+        try:
+            date.fromisoformat(checked_through)
+        except ValueError as error:
+            raise PipelineError(
+                "invalid_act",
+                f"a status of {status} needs the date it was checked through, "
+                "as YYYY-MM-DD",
+            ) from error
+    elif checked_through:
+        raise PipelineError(
+            "invalid_act",
+            "a checked through date claims a status; leave it empty for unknown",
+        )
     if not re.fullmatch(r"[a-z]{2}(?:-[a-z0-9]+)+", jurisdiction):
         raise PipelineError("invalid_act", "jurisdiction must look like ng-federal")
     try:
@@ -123,8 +141,8 @@ def build(values: dict[str, str], source_id: str) -> dict[str, Any]:
         },
         "aliases": [alias for alias in (short,) if alias and alias != official],
         "status": status,
-        "checked_through_date": None,
-        "status_source_ids": [],
+        "checked_through_date": checked_through or None,
+        "status_source_ids": [source_id] if status != "unknown" else [],
         "source_refs": [
             {
                 "source_id": source_id,

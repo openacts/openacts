@@ -37,7 +37,13 @@ are corrected later by editing the record.</p>
     {% for value in statuses %}
     <option value="{{ value }}"{% if value == "unknown" %} selected{% endif %}>{{ value }}</option>
     {% endfor %}
-    </select></td></tr>
+    </select> <small>anything but <code>unknown</code> is a claim, so it needs a
+    date below</small></td></tr>
+<tr><td><label for="checked_through_date">Checked through</label></td>
+    <td><input id="checked_through_date" name="checked_through_date" size="14"
+        placeholder="YYYY-MM-DD">
+    <small>the date you verified the status; leave empty for
+    <code>unknown</code>. The Source is recorded as what you checked.</small></td></tr>
 <tr><td></td><td><button type="submit">Save Act record</button></td></tr>
 </table>
 </form>
