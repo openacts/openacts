@@ -1,0 +1,54 @@
+{
+  "schema_version": "0.1.0",
+  "record_type": "act",
+  "act_id": "ng-federal-act-2023-nigeria-data-protection",
+  "jurisdiction": "ng-federal",
+  "country_code": "NG",
+  "titles": {
+    "official": "Nigeria Data Protection Act, 2023",
+    "short": "ndpa-act",
+    "long": null
+  },
+  "year": 2023,
+  "number": "119",
+  "citation": "Nigeria Data Protection Act, 2023",
+  "text_kind": "as_enacted",
+  "dates": {
+    "assent": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    },
+    "publication": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    },
+    "commencement": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    },
+    "repeal": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    }
+  },
+  "aliases": [
+    "ndpa-act"
+  ],
+  "status": "in_force",
+  "checked_through_date": "2026-08-29",
+  "status_source_ids": [
+    "sha256:5bfb22cf7b344e92ecca9b80decf73db694a0d1000c4f42188f46e047d8df075"
+  ],
+  "source_refs": [
+    {
+      "source_id": "sha256:5bfb22cf7b344e92ecca9b80decf73db694a0d1000c4f42188f46e047d8df075",
+      "role": "authoritative_text",
+      "scope_note": null
+    }
+  ],
+  "editorial_notes": []
+}
