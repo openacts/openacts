@@ -1157,9 +1157,6 @@ class CriticNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
                 break
             except RejectedCheckpoint as exc:
                 if attempt:
-                    # A critic that cannot describe a repair is no more fatal
-                    # than one that cannot be reached: the draft it was asked to
-                    # improve still exists, and the audit judges it.
                     _emit(
                         ctx.deps,
                         "critic_unavailable",
@@ -1183,9 +1180,9 @@ class CriticNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
                 if not exc.retryable:
                     raise
                 if attempt:
-                    # Repair is an improvement on a draft that already exists.
-                    # An unreachable critic is not a reason to discard it; the
-                    # audit is the authority on whether it can be reviewed.
+                    # A critic that cannot be reached, or cannot describe a
+                    # repair, leaves a draft that already exists. The audit is
+                    # the authority on whether it can be reviewed.
                     _emit(
                         ctx.deps,
                         "critic_unavailable",

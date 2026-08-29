@@ -33,7 +33,6 @@ class Job:
 
     @property
     def started(self) -> str:
-        """Wall clock reading of the UTC stamp this job's id is built from."""
         stamp = self.job_id.split("-")[0]
         try:
             moment = datetime.strptime(stamp, "%Y%m%dT%H%M%S%z")
@@ -85,8 +84,6 @@ class Job:
 
 
 class JobStore:
-    """Jobs started by this console, newest first."""
-
     def __init__(self, cache_root: Path, project_root: Path) -> None:
         self.cache_root = cache_root
         self.project_root = project_root

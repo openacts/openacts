@@ -25,8 +25,6 @@ DEFAULT_JURISDICTION = "ng-federal"
 
 @dataclass(frozen=True)
 class Draft:
-    """What the form shows, with everything derivable already filled in."""
-
     source_id: str
     digest: str
     official_title: str
@@ -85,7 +83,6 @@ def draft_from_receipt(receipt: dict[str, Any]) -> Draft:
 
 
 def build(values: dict[str, str], source_id: str) -> dict[str, Any]:
-    """Assemble a schema-valid Act record from the form's answers."""
     official = values.get("official_title", "").strip()
     slug = slugify(values.get("slug", ""))
     jurisdiction = values.get("jurisdiction", DEFAULT_JURISDICTION).strip()
@@ -140,7 +137,6 @@ def build(values: dict[str, str], source_id: str) -> dict[str, Any]:
 
 
 def write(cache_root: Path, act: dict[str, Any]) -> str:
-    """Store the record under `acts/` and return its filename."""
     name = f"{act['act_id']}.json"
     path = cache_root / "acts" / name
     path.parent.mkdir(parents=True, exist_ok=True)
