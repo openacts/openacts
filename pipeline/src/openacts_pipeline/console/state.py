@@ -214,7 +214,6 @@ def _next_stage(state: SourceState) -> str | None:
 
 
 def titles_by_digest(cache_root: Path) -> dict[str, str]:
-    """Digest to Act title, so an artifact can be chosen by name not by hash."""
     return {state.digest: state.title for state in survey(cache_root)}
 
 

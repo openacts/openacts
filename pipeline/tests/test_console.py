@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from openacts_pipeline.common import local_clock
+from openacts_pipeline.common import PipelineError, local_clock
 from openacts_pipeline.console import acts, review
 from openacts_pipeline.console.app import _summarise, create_app
 from openacts_pipeline.console.jobs import Job
@@ -747,6 +747,7 @@ def test_a_gazette_number_names_the_act_the_way_the_corpus_does(
             "jurisdiction": "ng-federal",
             "text_kind": "as_enacted",
             "status": "in_force",
+            "checked_through_date": "2026-08-29",
         },
         "sha256:abc",
     )
@@ -863,3 +864,68 @@ def test_an_unreadable_timestamp_renders_as_nothing_rather_than_crashing() -> No
     assert local_clock("not a timestamp") == ""
     assert _summarise({"event": "started"}).strip().startswith("started")
     assert Job("nonsense", "s", [], Path("."), execute=True).started == ""
+
+
+def test_asserting_a_status_requires_the_evidence_the_schema_demands() -> None:
+    """Any status but `unknown` needs a checked-through date and a source.
+
+    The form offered six statuses and always wrote a null date and no sources,
+    so five of them produced a record that could only fail at `candidate`.
+    """
+    from openacts_pipeline.corpus_schema import validate_record
+
+    answers = {
+        "official_title": "Electoral Act, 2026",
+        "year": "2026",
+        "number": "40",
+        "slug": "electoral",
+        "jurisdiction": "ng-federal",
+        "text_kind": "as_enacted",
+        "status": "in_force",
+    }
+
+    with pytest.raises(PipelineError, match="checked through"):
+        acts.build(answers, SOURCE_ID)
+
+    record = acts.build(
+        {**answers, "checked_through_date": "2026-08-29"}, SOURCE_ID
+    )
+    validate_record("act", record)
+    assert record["checked_through_date"] == "2026-08-29"
+    assert record["status_source_ids"] == [SOURCE_ID]
+
+
+def test_an_unknown_status_carries_no_date_or_sources() -> None:
+    from openacts_pipeline.corpus_schema import validate_record
+
+    record = acts.build(
+        {
+            "official_title": "Electoral Act, 2026",
+            "year": "2026",
+            "slug": "electoral",
+            "jurisdiction": "ng-federal",
+            "text_kind": "as_enacted",
+            "status": "unknown",
+        },
+        SOURCE_ID,
+    )
+
+    validate_record("act", record)
+    assert record["checked_through_date"] is None
+    assert record["status_source_ids"] == []
+
+
+def test_a_checked_through_date_must_look_like_a_date() -> None:
+    with pytest.raises(PipelineError, match="checked through"):
+        acts.build(
+            {
+                "official_title": "Electoral Act, 2026",
+                "year": "2026",
+                "slug": "electoral",
+                "jurisdiction": "ng-federal",
+                "text_kind": "as_enacted",
+                "status": "in_force",
+                "checked_through_date": "last Tuesday",
+            },
+            SOURCE_ID,
+        )
