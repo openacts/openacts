@@ -52,7 +52,7 @@ web-check:
 	NEXT_PUBLIC_OPENACTS_API_URL="$(NEXT_PUBLIC_OPENACTS_API_URL)" OPENACTS_WEB_REVISION="$$(git rev-parse HEAD)" npm --prefix web run check
 
 web-run:
-	NEXT_PUBLIC_OPENACTS_API_URL="$(NEXT_PUBLIC_OPENACTS_API_URL)" OPENACTS_WEB_REVISION="$$(git rev-parse HEAD)" npm --prefix web run dev
+	NEXT_PUBLIC_OPENACTS_API_URL="$(NEXT_PUBLIC_OPENACTS_API_URL)" OPENACTS_WEB_REVISION="$$(git rev-parse HEAD)" OPENACTS_REVALIDATE_SECRET="$(OPENACTS_REVALIDATE_SECRET)" npm --prefix web run dev
 
 integration-test: db-up
 	OPENACTS_TEST_DATABASE_URL="$(OPENACTS_TEST_DATABASE_URL)" uv run --project pipeline pytest pipeline/tests/test_projection.py
