@@ -59,7 +59,6 @@ class Stage:
         return argv
 
     def environment(self, values: dict[str, str]) -> dict[str, str]:
-        """Environment overrides this run needs, beyond the console's own."""
         chosen: dict[str, str] = {}
         for extra in self.extra:
             if extra.env is None or not values.get(extra.name):
@@ -139,7 +138,6 @@ BY_NAME: dict[str, Stage] = {stage.name: stage for stage in STAGES}
 
 
 def artifacts(cache_root: Path, folder: str) -> list[str]:
-    """Names in one cache folder, newest first, for a form's input list."""
     directory = cache_root / folder
     if not directory.is_dir():
         return []

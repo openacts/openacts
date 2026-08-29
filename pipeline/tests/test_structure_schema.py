@@ -165,3 +165,42 @@ def test_repair_patch_is_bounded_to_surgical_draft_operations() -> None:
                 ],
             }
         )
+
+
+def test_adding_a_root_is_allowed_because_json_patch_add_inserts() -> None:
+    """RFC 6902 `add` at an array index inserts before it; it consumes nothing.
+
+    A front-matter or body unit may hold several roots, so adding a missing
+    preamble is a legitimate repair. Units that must hold exactly one root are
+    the draft validator's business, not the patch schema's.
+    """
+    patch = RepairPatch.model_validate(
+        {
+            "unit_id": "front-matter",
+            "operations": [
+                {
+                    "op": "add",
+                    "path": "/nodes/0",
+                    "value": '{"node_type":"preamble","pdf_page":9}',
+                },
+                {
+                    "op": "add",
+                    "path": "/nodes/-",
+                    "value": '{"node_type":"preamble","pdf_page":9}',
+                },
+            ],
+        }
+    )
+    assert len(patch.operations) == 2
+
+
+def test_taking_a_whole_root_away_is_still_refused() -> None:
+    for operation in (
+        {"op": "remove", "path": "/nodes/0"},
+        {"op": "replace", "path": "/nodes/0", "value": "{}"},
+        {"op": "move", "from_path": "/nodes/0", "path": "/nodes/1/children/-"},
+    ):
+        with pytest.raises(ValidationError, match="whole root"):
+            RepairPatch.model_validate(
+                {"unit_id": "chapter-05", "operations": [operation]}
+            )

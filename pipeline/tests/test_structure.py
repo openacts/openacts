@@ -2071,3 +2071,160 @@ def test_an_unreachable_critic_does_not_discard_a_completed_draft(
     assert unavailable["error_code"] == "model_transient"
     # The draft was audited rather than thrown away with the critic.
     assert "audit_completed" in events
+
+
+def test_an_unavailable_repair_patch_leaves_the_draft_it_could_not_improve(
+    tmp_path: Path,
+) -> None:
+    """The third place a spent retry discarded a complete draft."""
+    cache_root = tmp_path / "source-cache"
+    extraction = _write_extraction(cache_root, "1. Supremacy\nBinding wording. Extra.")
+    plan = StructurePlan.model_validate(
+        {
+            "legal_start_pdf_page": 1,
+            "legal_end_pdf_page": 1,
+            "units": [
+                {"unit_id": "body", "kind": "body",
+                 "start_pdf_page": 1, "end_pdf_page": 1}
+            ],
+        }
+    )
+    partial = StructureDraft.model_validate(
+        {"nodes": [{**_node("section", "1.", text="Binding"), "heading": "Supremacy"}]}
+    )
+    progress: list[dict[str, object]] = []
+    patch_calls = 0
+
+    async def runner(
+        raw_text: str,
+        _: StructureSettings,
+        scope: str,
+        output_type: type[object],
+        validate: object,
+    ) -> ModelRun:
+        nonlocal patch_calls
+        if output_type is StructurePlan:
+            validate(plan)
+            return ModelRun(
+                output=plan, model="model", output_mode="tool", latency_seconds=0.1,
+                usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+            )
+        if output_type is RepairPlan:
+            decision = RepairPlan.model_validate(
+                {
+                    "decisions": [
+                        {"unit_id": "body", "action": "replace_unit",
+                         "reason": "wording is missing from the draft"}
+                    ]
+                }
+            )
+            validate(decision)
+            return ModelRun(
+                output=decision, model="model", output_mode="tool",
+                latency_seconds=0.1,
+                usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+            )
+        if output_type is RepairPatch:
+            patch_calls += 1
+            raise PipelineError(
+                "model_invalid_output", "patch never parsed", retryable=True
+            )
+        validate(partial)
+        return ModelRun(
+            output=partial, model="model", output_mode="tool", latency_seconds=0.1,
+            usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+        )
+
+    try:
+        structure(
+            extraction,
+            execute=True,
+            cache_root=cache_root,
+            settings=StructureSettings("key", "https://example.com", "model", 30),
+            primary_runner=runner,
+            progress=progress.append,
+        )
+    except PipelineError as error:
+        assert error.code == "structure_audit_failed"
+
+    events = [event["event"] for event in progress]
+    assert patch_calls >= 2, "retried before giving up on the patch"
+    discarded = [e for e in progress if e["event"] == "repair_patch_discarded"]
+    assert discarded and discarded[0]["reason"] == "model_unavailable"
+    # The run went on to audit the draft instead of dying inside repair.
+    assert events.count("audit_completed") >= 2
+
+
+def test_a_critic_that_keeps_returning_an_invalid_plan_is_not_fatal(
+    tmp_path: Path,
+) -> None:
+    """The last place a spent retry could discard a finished draft."""
+    cache_root = tmp_path / "source-cache"
+    extraction = _write_extraction(cache_root, "1. Supremacy\nBinding wording. Extra.")
+    plan = StructurePlan.model_validate(
+        {
+            "legal_start_pdf_page": 1,
+            "legal_end_pdf_page": 1,
+            "units": [
+                {"unit_id": "body", "kind": "body",
+                 "start_pdf_page": 1, "end_pdf_page": 1}
+            ],
+        }
+    )
+    partial = StructureDraft.model_validate(
+        {"nodes": [{**_node("section", "1.", text="Binding"), "heading": "Supremacy"}]}
+    )
+    progress: list[dict[str, object]] = []
+
+    async def runner(
+        raw_text: str,
+        _: StructureSettings,
+        scope: str,
+        output_type: type[object],
+        validate: object,
+    ) -> ModelRun:
+        if output_type is StructurePlan:
+            validate(plan)
+            return ModelRun(
+                output=plan, model="model", output_mode="tool", latency_seconds=0.1,
+                usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+            )
+        if output_type is RepairPlan:
+            # Decides a unit that is not affected, so validation always refuses.
+            wrong = RepairPlan.model_validate(
+                {
+                    "decisions": [
+                        {"unit_id": "no-such-unit", "action": "replace_unit",
+                         "reason": "the critic keeps naming the wrong unit"}
+                    ]
+                }
+            )
+            try:
+                validate(wrong)
+            except PipelineError as invalid:
+                raise structure_module.RejectedModelOutput(
+                    "model", wrong, invalid
+                ) from invalid
+            raise AssertionError("an invalid repair plan unexpectedly validated")
+        validate(partial)
+        return ModelRun(
+            output=partial, model="model", output_mode="tool", latency_seconds=0.1,
+            usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+        )
+
+    try:
+        structure(
+            extraction,
+            execute=True,
+            cache_root=cache_root,
+            settings=StructureSettings("key", "https://example.com", "model", 30),
+            primary_runner=runner,
+            progress=progress.append,
+        )
+    except PipelineError as error:
+        # Only the audit may end the run, never the critic.
+        assert error.code == "structure_audit_failed"
+
+    events = [event["event"] for event in progress]
+    assert "critic_unavailable" in events
+    assert "audit_completed" in events

@@ -36,7 +36,6 @@ class Finding:
 
     @property
     def quote(self) -> str:
-        """The draft text this finding is about, when it names any."""
         if self.is_variance:
             return self.draft_excerpt
         return self.source_excerpt if self.kind in DRAFT_QUOTED_CODES else ""
@@ -170,11 +169,7 @@ def _findings_from(audit: dict[str, Any]) -> list[Finding]:
 
 
 def _place(findings: list[Finding], views: list[ProvisionView]) -> list[PageFindings]:
-    """Attach each finding to the Provision it quotes; group the rest by page.
-
-    Returns the page groups, having filled in `ProvisionView.findings` as a side
-    effect.
-    """
+    """Fills in `ProvisionView.findings` as a side effect."""
     normalized = [(view, _normalized(view.text)) for view in views]
     by_page: dict[int | None, list[Finding]] = {}
     for finding in findings:

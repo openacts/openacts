@@ -350,10 +350,20 @@ class RepairOperation(BaseModel):
             raise ValueError("from_path is required for move")
         if self.op != "move" and self.from_path is not None:
             raise ValueError(f"from_path is not allowed for {self.op}")
-        if re.fullmatch(r"/nodes/\d+", self.path) or (
-            self.from_path is not None and re.fullmatch(r"/nodes/\d+", self.from_path)
-        ):
-            raise ValueError("repair operations cannot replace or remove a whole root")
+        # An `add` at an array index inserts before it, so it takes no root
+        # away. Whether a unit may hold the extra root is the draft validator's
+        # rule, not this schema's.
+        takes_a_root = (
+            self.op in {"remove", "replace"}
+            and re.fullmatch(r"/nodes/\d+", self.path) is not None
+        ) or (
+            self.from_path is not None
+            and re.fullmatch(r"/nodes/\d+", self.from_path) is not None
+        )
+        if takes_a_root:
+            raise ValueError(
+                f"a {self.op} operation cannot take a whole root away"
+            )
         return self
 
 

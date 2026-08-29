@@ -40,7 +40,6 @@ class SourceState:
 
     @property
     def reached(self) -> str:
-        """The furthest stage this document has actually completed."""
         done = [name for name in STAGE_ORDER if self.stages.get(name) == REACHED]
         return done[-1] if done else "acquire"
 
@@ -129,7 +128,6 @@ def _corpus_by_digest(corpus_root: Path) -> dict[str, tuple[str, Path]]:
 
 
 def survey(cache_root: Path, corpus_root: Path | None = None) -> list[SourceState]:
-    """One row per successfully acquired Source, newest acquisition first."""
     runs = cache_root / "runs"
     if not runs.is_dir():
         return []

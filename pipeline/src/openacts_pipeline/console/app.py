@@ -78,7 +78,6 @@ def create_app(cache_root: Path, project_root: Path) -> FastAPI:
 
     @app.post("/sources")
     async def add_source(request: Request) -> RedirectResponse:
-        """Write an acquisition request and immediately start acquiring it."""
         values = {key: str(value).strip() for key, value in (await request.form()).items()}
         missing = [
             field
@@ -294,7 +293,6 @@ def _receipt_for(cache_root: Path, digest: str) -> dict | None:
 
 
 def _request_filename(cache_root: Path, title: str) -> str:
-    """A readable filename for a new request, without overwriting an existing one."""
     slug = "".join(
         character if character.isalnum() else "-" for character in title.lower()
     ).strip("-")
@@ -317,7 +315,6 @@ def _require_offered(cache_root: Path, folder: str, chosen: str | None) -> None:
 
 
 def _summarise(event: dict) -> str:
-    """One progress line: the moment, the event, and the keys that change."""
     stamp = local_clock(str(event.get("timestamp", "")))
     name = event.get("event") or event.get("status") or "event"
     detail = " ".join(
@@ -336,7 +333,6 @@ def _summarise(event: dict) -> str:
 
 
 async def _stream(job: Job) -> AsyncIterator[bytes]:
-    """Follow the progress file until the stage exits, then say so."""
     sent = 0
     while True:
         # Read exit state first: anything the stage wrote before exiting is then
