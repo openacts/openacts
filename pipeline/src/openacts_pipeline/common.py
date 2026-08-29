@@ -46,6 +46,25 @@ def local_clock(stamp: str) -> str:
         return ""
 
 
+def decode_json_with_trailing_delimiters(raw: str) -> Any | None:
+    """Decode a JSON value that carries only stray closing delimiters after it.
+
+    Models occasionally repeat a bracket when closing a deep reply. Anything
+    else following the value is content the model invented, and dropping it
+    silently would hide a truncated or duplicated response, so only `]` and `}`
+    are forgiven.
+    """
+    try:
+        start = len(raw) - len(raw.lstrip())
+        decoded, end = json.JSONDecoder().raw_decode(raw, idx=start)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    trailing = raw[end:].strip()
+    if trailing and any(character not in "]}" for character in trailing):
+        return None
+    return decoded
+
+
 def verify_cached_pdf(
     cache_root: Path,
     relative_path: Path,

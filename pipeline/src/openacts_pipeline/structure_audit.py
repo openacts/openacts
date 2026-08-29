@@ -9,6 +9,7 @@ import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -60,6 +61,9 @@ NEAR_MATCH_RATIO = 0.90
 NEAR_MATCH_MAX_SOURCE_ONLY = 40
 NEAR_MATCH_MAX_DRAFT_ONLY = 4
 NEAR_MATCH_MIN_LENGTH = 40
+# Furniture a sentence can straddle at a page break. Measured across the
+# Electoral Act's 23 page-spanning blocks the largest was 172 characters.
+MAX_PAGE_BREAK_GAP = 400
 
 
 class AuditIssue(BaseModel):
@@ -599,6 +603,59 @@ def near_source_window(needle: str, haystack: str) -> tuple[int, str, int] | Non
     if best is None:
         return None
     return start, best[2], -best[1]
+
+
+def _longest_prefix_in(needle: str, haystack: str) -> int:
+    """Length of the longest prefix of `needle` that occurs in `haystack`.
+
+    Binary search is sound because a prefix of a substring is itself a
+    substring, so presence is monotone in the prefix length.
+    """
+    low, high = 0, len(needle)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if needle[:middle] in haystack:
+            low = middle
+        else:
+            high = middle - 1
+    return low
+
+
+def spans_page_break(needle: str, page_texts: list[str]) -> bool:
+    """Whether `needle` runs contiguously through `page_texts`, in page order.
+
+    Extraction interleaves marginal notes into the text flow, so a sentence
+    continuing onto the next page is not a substring of those pages joined: the
+    notes sit between its halves. It is still the source's own wording when each
+    page contributes one contiguous run, in order, with only a bounded amount of
+    furniture skipped at the seam.
+
+    Taking the longest run each page can supply loses nothing, because a suffix
+    of a substring is also a substring: if any split works, the greedy one does.
+    """
+    if not needle or len(page_texts) < 2:
+        return False
+    placements: list[tuple[int, int, int]] = []
+    remaining = needle
+    for index, page in enumerate(page_texts):
+        final = index == len(page_texts) - 1
+        take = len(remaining) if final else _longest_prefix_in(remaining, page)
+        if take == 0:
+            return False
+        segment = remaining[:take]
+        # A run leading into a break sits as late on its page as it can; one
+        # continuing from a break starts as early as it can.
+        start = page.find(segment) if index else page.rfind(segment)
+        if start < 0:
+            return False
+        placements.append((len(page), start, take))
+        remaining = remaining[take:]
+    if remaining:
+        return False
+    return all(
+        (length - (start + take)) + next_start <= MAX_PAGE_BREAK_GAP
+        for (length, start, take), (_, next_start, _) in pairwise(placements)
+    )
 
 
 def matches_source_closely(needle: str, haystack: str) -> bool:

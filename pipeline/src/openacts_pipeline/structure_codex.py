@@ -12,7 +12,10 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from openacts_pipeline.common import PipelineError
+from openacts_pipeline.common import (
+    PipelineError,
+    decode_json_with_trailing_delimiters,
+)
 from openacts_pipeline.config import DEFAULT_CODEX_MODEL_LABEL, StructureSettings
 from openacts_pipeline.structure_prompts import (
     CRITIC_INSTRUCTIONS,
@@ -161,6 +164,19 @@ def _event_error(events: str) -> str:
     return ""
 
 
+def _trailing_report(message: str, error: json.JSONDecodeError) -> str:
+    """What followed the JSON value, so a repeat says why it could not parse.
+
+    Reporting only the opening characters leaves the actual defect, which is at
+    the end, invisible.
+    """
+    cut = getattr(error, "pos", 0) or 0
+    trailing = message[cut:].strip()
+    if not trailing:
+        return "nothing followed the value"
+    return f"{len(trailing)} characters followed the value: {trailing[:300]!r}"
+
+
 def _final_message(message_path: Path, events: str) -> str:
     if message_path.exists():
         text = message_path.read_text(encoding="utf-8").strip()
@@ -257,10 +273,20 @@ async def run_codex(
             "model_invalid_output", "codex exec returned no final message", retryable=True
         )
     try:
-        output = output_type.model_validate(
-            decode_json_text_values(json.loads(message))
-        )
-    except (ValidationError, json.JSONDecodeError) as exc:
+        decoded = json.loads(message)
+    except json.JSONDecodeError as exc:
+        decoded = decode_json_with_trailing_delimiters(message)
+        if decoded is None:
+            raise PipelineError(
+                "model_invalid_output",
+                f"{settings.primary_model} did not return valid structured "
+                f"output: {str(exc)[:600]}; {_trailing_report(message, exc)}; "
+                f"reply began: {message[:300]}",
+                retryable=True,
+            ) from exc
+    try:
+        output = output_type.model_validate(decode_json_text_values(decoded))
+    except ValidationError as exc:
         raise PipelineError(
             "model_invalid_output",
             f"{settings.primary_model} did not return valid structured output: "

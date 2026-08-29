@@ -940,8 +940,39 @@ class RunUnitsNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
                         )
                         return result
                     except PipelineError as exc:
-                        if not exc.retryable or request_attempt:
+                        if not exc.retryable:
                             raise
+                        if request_attempt:
+                            # One unhelpful unit is not a reason to discard the
+                            # twelve that worked. The audit reports its pages as
+                            # unclaimed, which is what review needs to see.
+                            _emit(
+                                ctx.deps,
+                                "unit_failed",
+                                unit_id=unit.unit_id,
+                                pass_name=pass_name,
+                                error_code=exc.code,
+                                detail=str(exc)[:400],
+                            )
+                            empty = StructureDraft(nodes=[])
+                            return UnitResult(
+                                unit=unit,
+                                draft=empty,
+                                run=ModelRun(
+                                    output=empty,
+                                    model=ctx.deps.settings.primary_model,
+                                    output_mode="failed",
+                                    latency_seconds=0,
+                                    usage={
+                                        "requests": 0,
+                                        "input_tokens": 0,
+                                        "output_tokens": 0,
+                                    },
+                                ),
+                                pass_name=pass_name,
+                                checkpoint_reused=False,
+                                validation_issue=_issue_for_validation(unit, exc),
+                            )
                         _emit(
                             ctx.deps,
                             "unit_retrying",
@@ -1047,7 +1078,7 @@ class AuditNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
 class CriticNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
     async def run(
         self, ctx: GraphRunContext[StructureState, StructureDeps]
-    ) -> RepairNode | PlanNode:
+    ) -> RepairNode | PlanNode | FinalizeNode:
         plan = ctx.state.plan
         report = ctx.state.audit
         if plan is None or report is None:
@@ -1143,8 +1174,20 @@ class CriticNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
                     error_code=exc.validation_error.code,
                 )
             except PipelineError as exc:
-                if not exc.retryable or attempt:
+                if not exc.retryable:
                     raise
+                if attempt:
+                    # Repair is an improvement on a draft that already exists.
+                    # An unreachable critic is not a reason to discard it; the
+                    # audit is the authority on whether it can be reviewed.
+                    _emit(
+                        ctx.deps,
+                        "critic_unavailable",
+                        pass_name=attempt_name,
+                        error_code=exc.code,
+                        detail=str(exc)[:400],
+                    )
+                    return FinalizeNode()
                 _emit(
                     ctx.deps,
                     "critic_retrying",
