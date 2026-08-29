@@ -1730,3 +1730,344 @@ def test_plan_ignores_markers_in_the_bill_schedule_appendix() -> None:
     )
 
     structure_module._validate_plan(plan, pages)
+
+
+def test_content_validation_follows_a_sentence_across_marginal_notes() -> None:
+    """The Electoral Act prints section headings in the margin.
+
+    pypdf extracts them inline, so a sentence running across a page break has
+    the notes wedged between its halves. The wording is the real page 15/16
+    seam of the Electoral Act 2026.
+    """
+    draft = StructureDraft.model_validate(
+        {
+            "nodes": [
+                {
+                    "node_type": "section",
+                    "display_label": "19.",
+                    "pdf_page": 1,
+                    "content_blocks": [
+                        {
+                            "kind": "text",
+                            "text": (
+                                "appoint a period of seven days during which a "
+                                "copy of the voters' register for each Local "
+                                "Government, Area Council or Ward"
+                            ),
+                            "pdf_pages": [1, 2],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    pages = [
+        {
+            "pdf_page": 1,
+            "text": (
+                "A  15         2026 No. 1 Electoral Act, 2026\n"
+                "19. appoint a period\nof seven days during which a copy of the "
+                "voters' register for each Local\n"
+                "Power to\nprint or\nissue voters\ncard\nCustody of\nvoters'\nregister"
+            ),
+        },
+        {
+            "pdf_page": 2,
+            "text": (
+                "A  16         2026 No. 1 Electoral Act, 2026\n"
+                "Revision\nofficer for\nhearing of\nclaims\nProprietary\n"
+                "rights in the\nvoters' card\n"
+                "Government, Area Council or Ward"
+            ),
+        },
+    ]
+
+    structure_module._validate_draft(
+        draft,
+        allowed_types=structure_module.DOCUMENT_NODE_TYPES,
+        page_count=2,
+        pages=pages,
+    )
+
+
+def test_content_validation_still_rejects_halves_that_are_far_apart() -> None:
+    """Continuing across a break is bounded; stitching distant text is not."""
+    filler = " ".join(f"unrelated wording number {index}" for index in range(60))
+    draft = StructureDraft.model_validate(
+        {
+            "nodes": [
+                {
+                    "node_type": "section",
+                    "display_label": "1.",
+                    "pdf_page": 1,
+                    "content_blocks": [
+                        {
+                            "kind": "text",
+                            "text": "Alpha wording that begins here beta ends there.",
+                            "pdf_pages": [1, 2],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    pages = [
+        {"pdf_page": 1, "text": f"1. Alpha wording that begins here\n{filler}"},
+        {"pdf_page": 2, "text": f"{filler}\nbeta ends there."},
+    ]
+
+    with pytest.raises(PipelineError) as failure:
+        structure_module._validate_draft(
+            draft,
+            allowed_types=structure_module.DOCUMENT_NODE_TYPES,
+            page_count=2,
+            pages=pages,
+        )
+    assert failure.value.code == "source_text_mismatch"
+
+
+def test_one_unit_that_never_parses_does_not_discard_the_others(
+    tmp_path: Path,
+) -> None:
+    """The Electoral Act lost twelve good units to one unparseable schedule."""
+    cache_root = tmp_path / "source-cache"
+    texts = ["1. Supremacy\nBinding wording.", "2. Other\nSecond wording."]
+    extraction = cache_root / "extractions/extract.json"
+    extraction.parent.mkdir(parents=True)
+    extraction.write_text(
+        json.dumps(
+            {
+                "stage": "extract",
+                "status": "success",
+                "extraction_version": 2,
+                "source_id": SOURCE_ID,
+                "page_count": 2,
+                "pages": [
+                    {"pdf_page": index, "text": text, "text_characters": len(text)}
+                    for index, text in enumerate(texts, start=1)
+                ],
+                "result_path": "extractions/extract.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    plan = StructurePlan.model_validate(
+        {
+            "legal_start_pdf_page": 1,
+            "legal_end_pdf_page": 2,
+            "units": [
+                {"unit_id": "body", "kind": "body",
+                 "start_pdf_page": 1, "end_pdf_page": 1},
+                {"unit_id": "schedule-01", "kind": "schedule",
+                 "display_label": "2.", "heading": "Other",
+                 "start_pdf_page": 2, "end_pdf_page": 2},
+            ],
+        }
+    )
+    good = StructureDraft.model_validate(
+        {"nodes": [{**_node("section", "1.", text="Binding wording."),
+                    "heading": "Supremacy"}]}
+    )
+    progress: list[dict[str, object]] = []
+    attempts = 0
+
+    async def runner(
+        raw_text: str,
+        _: StructureSettings,
+        scope: str,
+        output_type: type[object],
+        validate: object,
+    ) -> ModelRun:
+        nonlocal attempts
+        if output_type is StructurePlan:
+            validate(plan)
+            return ModelRun(
+                output=plan, model="model", output_mode="tool",
+                latency_seconds=0.1,
+                usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+            )
+        if output_type is StructureDraft and "schedule" in scope:
+            attempts += 1
+            raise PipelineError(
+                "model_invalid_output",
+                "model did not return valid structured output: Extra data",
+                retryable=True,
+            )
+        if output_type is RepairPlan:
+            nothing = RepairPlan.model_validate(
+                {
+                    "decisions": [
+                        {
+                            "unit_id": "schedule-01",
+                            "action": "abort_unresolved",
+                            "reason": "the model never returned parseable output",
+                        }
+                    ]
+                }
+            )
+            validate(nothing)
+            return ModelRun(
+                output=nothing, model="model", output_mode="tool",
+                latency_seconds=0.1,
+                usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+            )
+        validate(good)
+        return ModelRun(
+            output=good, model="model", output_mode="tool", latency_seconds=0.1,
+            usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+        )
+
+    # A whole schedule is still missing, so the run ends in failure. What
+    # changed is that it is the critic's decision on a completed draft rather
+    # than one unit's exception discarding the others.
+    with pytest.raises(PipelineError) as failure:
+        structure(
+            extraction,
+            execute=True,
+            cache_root=cache_root,
+            settings=StructureSettings("key", "https://example.com", "model", 30),
+            primary_runner=runner,
+            progress=progress.append,
+        )
+    assert failure.value.code == "structure_audit_failed"
+
+    assert attempts == 2, "retried once, then carried rather than raised"
+    events = [event["event"] for event in progress]
+    assert "unit_failed" in events
+    failed = next(e for e in progress if e["event"] == "unit_failed")
+    assert failed["unit_id"] == "schedule-01"
+    assert failed["error_code"] == "model_invalid_output"
+    # The run reached the audit instead of dying at the unit.
+    assert events.index("unit_failed") < events.index("units_completed")
+    assert "audit_completed" in events
+    assert list((cache_root / "structure-work").glob("*/001-body.json"))
+
+
+def test_a_cross_reference_range_is_not_a_hidden_marker() -> None:
+    """`section 62 (4) - (8)` cites a range; it does not open a subsection.
+
+    The Electoral Act's part-04 was rejected for this. The structural form is
+    `62.-(1)`, where the dash carries the marker; here the dash separates two
+    citations.
+    """
+    text = (
+        "knowingly and willfully contrary to the procedures prescribed under "
+        "section 62 (4) – (8) of this Act."
+    )
+    draft = StructureDraft.model_validate(
+        {
+            "nodes": [
+                {
+                    "node_type": "section",
+                    "display_label": "65.",
+                    "pdf_page": 1,
+                    "content_blocks": [
+                        {"kind": "text", "text": text, "pdf_pages": [1]}
+                    ],
+                }
+            ]
+        }
+    )
+
+    structure_module._validate_draft(
+        draft,
+        allowed_types=structure_module.DOCUMENT_NODE_TYPES,
+        page_count=1,
+        pages=[{"pdf_page": 1, "text": f"65. {text}"}],
+    )
+
+
+def test_a_dash_that_really_opens_an_enumeration_is_still_caught() -> None:
+    text = 'a "competent authority" includes — (a) the Commission; or (b) the court.'
+    draft = StructureDraft.model_validate(
+        {
+            "nodes": [
+                {
+                    "node_type": "section",
+                    "display_label": "3.",
+                    "pdf_page": 1,
+                    "content_blocks": [
+                        {"kind": "text", "text": text, "pdf_pages": [1]}
+                    ],
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(PipelineError) as failure:
+        structure_module._validate_draft(
+            draft,
+            allowed_types=structure_module.DOCUMENT_NODE_TYPES,
+            page_count=1,
+            pages=[{"pdf_page": 1, "text": f"3. {text}"}],
+        )
+    assert failure.value.code == "incomplete_structure_output"
+
+
+def test_an_unreachable_critic_does_not_discard_a_completed_draft(
+    tmp_path: Path,
+) -> None:
+    """Repair improves a draft that already exists; it is not a gate on it."""
+    cache_root = tmp_path / "source-cache"
+    extraction = _write_extraction(cache_root, "1. Supremacy\nBinding wording.")
+    plan = StructurePlan.model_validate(
+        {
+            "legal_start_pdf_page": 1,
+            "legal_end_pdf_page": 1,
+            "units": [
+                {"unit_id": "body", "kind": "body",
+                 "start_pdf_page": 1, "end_pdf_page": 1}
+            ],
+        }
+    )
+    partial = StructureDraft.model_validate(
+        {"nodes": [{**_node("section", "1.", text="Binding"), "heading": "Supremacy"}]}
+    )
+    progress: list[dict[str, object]] = []
+    critic_calls = 0
+
+    async def runner(
+        raw_text: str,
+        _: StructureSettings,
+        scope: str,
+        output_type: type[object],
+        validate: object,
+    ) -> ModelRun:
+        nonlocal critic_calls
+        if output_type is StructurePlan:
+            validate(plan)
+            return ModelRun(
+                output=plan, model="model", output_mode="tool", latency_seconds=0.1,
+                usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+            )
+        if output_type is RepairPlan:
+            critic_calls += 1
+            raise PipelineError(
+                "model_transient", "critic provider unreachable", retryable=True
+            )
+        validate(partial)
+        return ModelRun(
+            output=partial, model="model", output_mode="tool", latency_seconds=0.1,
+            usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+        )
+
+    try:
+        structure(
+            extraction,
+            execute=True,
+            cache_root=cache_root,
+            settings=StructureSettings("key", "https://example.com", "model", 30),
+            primary_runner=runner,
+            progress=progress.append,
+        )
+    except PipelineError as error:
+        # Only the audit may end the run, never the unreachable critic.
+        assert error.code == "structure_audit_failed"
+
+    events = [event["event"] for event in progress]
+    assert critic_calls == 2, "retried once before giving up on the critic"
+    assert "critic_unavailable" in events
+    unavailable = next(e for e in progress if e["event"] == "critic_unavailable")
+    assert unavailable["error_code"] == "model_transient"
+    # The draft was audited rather than thrown away with the critic.
+    assert "audit_completed" in events

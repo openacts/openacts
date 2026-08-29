@@ -5,6 +5,7 @@ from pathlib import Path
 
 from openacts_pipeline.common import (
     PipelineError,
+    decode_json_with_trailing_delimiters,
     iso_timestamp,
     utc_now,
     verify_cached_pdf,
@@ -44,3 +45,18 @@ def test_shared_pipeline_primitives(tmp_path: Path) -> None:
         )
         == cached_pdf
     )
+
+
+def test_stray_closing_delimiters_after_a_value_are_recovered() -> None:
+    assert decode_json_with_trailing_delimiters('{"a": 1}') == {"a": 1}
+    assert decode_json_with_trailing_delimiters('{"a": 1}}]}') == {"a": 1}
+    assert decode_json_with_trailing_delimiters('  {"a": 1}  ]} ') == {"a": 1}
+
+
+def test_real_content_after_a_value_is_refused_rather_than_dropped() -> None:
+    """A second reply is a truncation or duplication, not a stray delimiter."""
+    assert decode_json_with_trailing_delimiters('{"a": 1}{"b": 2}') is None
+    assert decode_json_with_trailing_delimiters('{"a": 1} trailing prose') is None
+    assert decode_json_with_trailing_delimiters('{"a": 1},{"b": 2}') is None
+    assert decode_json_with_trailing_delimiters("not json at all") is None
+    assert decode_json_with_trailing_delimiters("") is None

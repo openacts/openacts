@@ -31,6 +31,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from openacts_pipeline.common import (
     PipelineError,
+    decode_json_with_trailing_delimiters,
     iso_timestamp,
     utc_now,
     write_json_result,
@@ -41,6 +42,7 @@ from openacts_pipeline.structure_audit import (
     audit_materialized_provisions,
     matches_source_closely,
     normalized_source_pages,
+    spans_page_break,
 )
 from openacts_pipeline.structure_codex import run_codex
 from openacts_pipeline.structure_prompts import (
@@ -149,6 +151,15 @@ CONTENT_OPTIONAL_LEAVES = {
 ADDRESSABLE_MARKER = re.compile(
     r"(?:^|\n|[—–:]|-\s+)\s*"
     r"(?:\(\d+[a-z]?\)|\([a-z]\)|\([ivxlcdm]+\)|\d+[a-z]?\.)\s+",
+    re.IGNORECASE,
+)
+# A citation such as "section 62 (4) to (8)" is printed with a dash between the
+# two markers. There the dash separates citations, where the drafting convention
+# for opening a subsection puts it directly after the section number, so neither
+# marker in a range opens a provision.
+CROSS_REFERENCE_RANGE = re.compile(
+    r"\((?:\d+[a-z]?|[a-z]|[ivxlcdm]+)\)\s*[—–-]\s*"
+    r"\((?:\d+[a-z]?|[a-z]|[ivxlcdm]+)\)",
     re.IGNORECASE,
 )
 PROMOTED_MARKER = re.compile(
@@ -312,13 +323,8 @@ def _recover_trailing_json_delimiters(
         raw = issue.get("input")
         if issue.get("type") != "json_invalid" or not isinstance(raw, str):
             continue
-        try:
-            start = len(raw) - len(raw.lstrip())
-            decoded, end = json.JSONDecoder().raw_decode(raw, idx=start)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        trailing = raw[end:].strip()
-        if not trailing or any(character not in "]}" for character in trailing):
+        decoded = decode_json_with_trailing_delimiters(raw)
+        if decoded is None:
             continue
         try:
             return output_type.model_validate(decoded)
@@ -507,7 +513,8 @@ def _page_source(pages: list[dict[str, Any]], pdf_pages: Iterable[int]) -> str:
 
 def _hides_addressable_marker(block: Any) -> bool:
     if isinstance(block, DraftTextBlock):
-        return ADDRESSABLE_MARKER.search(block.text) is not None
+        cited = CROSS_REFERENCE_RANGE.sub(" ", block.text)
+        return ADDRESSABLE_MARKER.search(cited) is not None
     if isinstance(block, DraftListBlock):
         return (
             block.marker_style in STRUCTURAL_LIST_STYLES
@@ -840,7 +847,12 @@ def _validate_draft(
                 # Extraction damage is the reviewer's to adjudicate, not a reason
                 # to reject a draft and spend another model pass; the audit records
                 # the exact difference against the provision.
-                if not matches_source_closely(normalized_text, normalized_source):
+                if not matches_source_closely(
+                    normalized_text, normalized_source
+                ) and not spans_page_break(
+                    normalized_text,
+                    [normalized_pages.get(pdf_page, "") for pdf_page in pdf_pages],
+                ):
                     raise PipelineError(
                         "source_text_mismatch",
                         f"{description} at {block_path} is not recoverable from "

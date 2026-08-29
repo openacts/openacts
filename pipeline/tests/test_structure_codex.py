@@ -8,6 +8,7 @@ from openacts_pipeline.structure_codex import (
     _command,
     _event_error,
     _final_message,
+    _trailing_report,
     _usage,
     decode_json_text_values,
     strict_schema,
@@ -178,3 +179,24 @@ def test_strict_schema_never_types_a_schema_container(model) -> None:
     for definition in strict.get("$defs", {}).values():
         assert "type" not in definition.get("properties", {})
     assert "type" not in strict.get("properties", {})
+
+
+def test_trailing_content_is_named_so_a_repeat_is_diagnosable() -> None:
+    """The Electoral Act run reported only the reply's first 400 characters.
+
+    The defect was at character 8857, so the message said nothing about it.
+    """
+    second = '{"nodes":[{"node_type":"schedule"}]}'
+    reply = '{"nodes":[]}' + second
+    try:
+        json.loads(reply)
+    except json.JSONDecodeError as error:
+        report = _trailing_report(reply, error)
+
+    assert f"{len(second)} characters followed the value" in report
+    assert "schedule" in report
+
+
+def test_a_reply_with_nothing_after_it_says_so() -> None:
+    error = json.JSONDecodeError("Expecting value", "{", 1)
+    assert _trailing_report("{", error) == "nothing followed the value"
