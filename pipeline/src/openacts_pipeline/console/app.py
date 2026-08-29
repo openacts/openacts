@@ -17,7 +17,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from openacts_pipeline.common import PipelineError
+from openacts_pipeline.common import PipelineError, local_clock
 from openacts_pipeline.console import acts
 from openacts_pipeline.console import review as review_model
 from openacts_pipeline.console.jobs import Job, JobStore
@@ -318,7 +318,7 @@ def _require_offered(cache_root: Path, folder: str, chosen: str | None) -> None:
 
 def _summarise(event: dict) -> str:
     """One progress line: the moment, the event, and the keys that change."""
-    stamp = str(event.get("timestamp", ""))[11:19]
+    stamp = local_clock(str(event.get("timestamp", "")))
     name = event.get("event") or event.get("status") or "event"
     detail = " ".join(
         f"{key}={value}"

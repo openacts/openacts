@@ -10,6 +10,7 @@ style="display:inline"><button>stop</button></form>{% endif %}</p>
 
 <h2>progress</h2>
 {% if events %}
+<p><small>Times are local.</small></p>
 <pre id="progress">{% for event in events %}{{ event }}
 {% endfor %}</pre>
 {% else %}

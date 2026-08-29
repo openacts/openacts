@@ -32,6 +32,16 @@ class Job:
     process: subprocess.Popen[bytes] | None = None
 
     @property
+    def started(self) -> str:
+        """Wall clock reading of the UTC stamp this job's id is built from."""
+        stamp = self.job_id.split("-")[0]
+        try:
+            moment = datetime.strptime(stamp, "%Y%m%dT%H%M%S%z")
+        except ValueError:
+            return ""
+        return moment.astimezone().strftime("%H:%M:%S")
+
+    @property
     def running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 

@@ -5,9 +5,10 @@
 <p>No stage has been run from this console yet.</p>
 {% else %}
 <table border="1" cellpadding="4">
-<tr><th>job</th><th>stage</th><th>mode</th><th>status</th></tr>
+<tr><th>started</th><th>job</th><th>stage</th><th>mode</th><th>status</th></tr>
 {% for job in jobs %}
 <tr>
+  <td>{{ job.started }}</td>
   <td><a href="/jobs/{{ job.job_id }}">{{ job.job_id }}</a></td>
   <td>{{ job.stage }}</td>
   <td>{{ "execute" if job.execute else "dry run" }}</td>
@@ -15,5 +16,6 @@
 </tr>
 {% endfor %}
 </table>
+<p><small>Times are local; job names carry the UTC stamp they were created with.</small></p>
 {% endif %}
 {% endblock %}

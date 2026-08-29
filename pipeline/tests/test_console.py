@@ -1,11 +1,14 @@
 import json
+import time
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from openacts_pipeline.common import local_clock
 from openacts_pipeline.console import acts, review
 from openacts_pipeline.console.app import _summarise, create_app
+from openacts_pipeline.console.jobs import Job
 from openacts_pipeline.console.registry import BY_NAME, artifacts
 from openacts_pipeline.console.state import survey
 from openacts_pipeline.corpus import CANDIDATE_VERSION, _ordered_provision_ids_sha256
@@ -112,7 +115,8 @@ def test_summarise_keeps_the_keys_that_change(tmp_path: Path) -> None:
             "passed": False,
         }
     )
-    assert line.startswith("13:41:22  audit_completed")
+    assert line.startswith(local_clock("2026-08-28T13:41:22.100000Z"))
+    assert "audit_completed" in line
     assert "issues=36" in line
     assert "usage" not in line
 
@@ -811,3 +815,51 @@ def test_an_invented_backend_is_refused(client: TestClient) -> None:
     )
 
     assert response.status_code == 400
+
+
+@pytest.fixture
+def in_zone(monkeypatch: pytest.MonkeyPatch):
+    """Run a test as if the operator sat in a named zone."""
+
+    def use(name: str) -> None:
+        monkeypatch.setenv("TZ", name)
+        time.tzset()
+
+    yield use
+    time.tzset()
+
+
+def test_progress_times_are_shown_on_the_operators_clock(in_zone) -> None:
+    """A UTC stamp with its Z sliced off reads as local when it is not."""
+    event = {
+        "timestamp": "2026-08-28T13:41:22.100000Z",
+        "event": "audit_completed",
+        "issues": 36,
+    }
+
+    in_zone("Africa/Lagos")
+    assert _summarise(event).startswith("14:41:22")
+
+    in_zone("UTC")
+    assert _summarise(event).startswith("13:41:22")
+
+    in_zone("America/New_York")
+    assert _summarise(event).startswith("09:41:22")
+
+
+def test_a_job_is_dated_on_the_operators_clock_too(in_zone) -> None:
+    """The jobs list dates a run only by the UTC stamp in its name."""
+    job = Job("20260828T134122Z-abc123", "structure", [], Path("."), execute=True)
+
+    in_zone("Africa/Lagos")
+    assert job.started == "14:41:22"
+
+    in_zone("UTC")
+    assert job.started == "13:41:22"
+
+
+def test_an_unreadable_timestamp_renders_as_nothing_rather_than_crashing() -> None:
+    assert local_clock("") == ""
+    assert local_clock("not a timestamp") == ""
+    assert _summarise({"event": "started"}).strip().startswith("started")
+    assert Job("nonsense", "s", [], Path("."), execute=True).started == ""
