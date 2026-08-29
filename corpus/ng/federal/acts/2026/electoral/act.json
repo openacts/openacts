@@ -1,0 +1,52 @@
+{
+  "schema_version": "0.1.0",
+  "record_type": "act",
+  "act_id": "ng-federal-act-2026-electoral",
+  "jurisdiction": "ng-federal",
+  "country_code": "NG",
+  "titles": {
+    "official": "Electoral Act, 2026",
+    "short": null,
+    "long": null
+  },
+  "year": 2026,
+  "number": "40",
+  "citation": "Electoral Act, 2026",
+  "text_kind": "as_enacted",
+  "dates": {
+    "assent": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    },
+    "publication": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    },
+    "commencement": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    },
+    "repeal": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    }
+  },
+  "aliases": [],
+  "status": "in_force",
+  "checked_through_date": "2026-08-29",
+  "status_source_ids": [
+    "sha256:dee5a37b62b920c9cfaf009b7dc1dcf5ccb5cbbeff807f5487eac868ce882fd6"
+  ],
+  "source_refs": [
+    {
+      "source_id": "sha256:dee5a37b62b920c9cfaf009b7dc1dcf5ccb5cbbeff807f5487eac868ce882fd6",
+      "role": "authoritative_text",
+      "scope_note": null
+    }
+  ],
+  "editorial_notes": []
+}
