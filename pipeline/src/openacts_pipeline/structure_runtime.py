@@ -1157,11 +1157,17 @@ class CriticNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
                 break
             except RejectedCheckpoint as exc:
                 if attempt:
-                    raise PipelineError(
-                        "structure_critic_failed",
-                        f"critic could not produce a valid repair plan: "
-                        f"{exc.validation_error}",
-                    ) from exc
+                    # A critic that cannot describe a repair is no more fatal
+                    # than one that cannot be reached: the draft it was asked to
+                    # improve still exists, and the audit judges it.
+                    _emit(
+                        ctx.deps,
+                        "critic_unavailable",
+                        pass_name=attempt_name,
+                        error_code=exc.validation_error.code,
+                        detail=str(exc.validation_error)[:400],
+                    )
+                    return FinalizeNode()
                 critic_scope += (
                     "\n\nThe previous repair plan failed deterministic validation. "
                     "Return a complete corrected RepairPlan.\nVALIDATION ERROR\n"
@@ -1345,8 +1351,23 @@ class RepairNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
                         )
                         return None
                     except PipelineError as exc:
-                        if not exc.retryable or request_attempt:
+                        if not exc.retryable:
                             raise
+                        if request_attempt:
+                            # A patch that never arrives leaves the unit as it
+                            # was, which is the same outcome as one that arrives
+                            # and fails validation.
+                            _emit(
+                                ctx.deps,
+                                "repair_patch_discarded",
+                                repair_round=round_number,
+                                unit_id=unit.unit_id,
+                                pass_name=pass_name,
+                                checkpoint_reused=False,
+                                reason="model_unavailable",
+                                error_code=exc.code,
+                            )
+                            return None
                         _emit(
                             ctx.deps,
                             "repair_patch_retrying",
