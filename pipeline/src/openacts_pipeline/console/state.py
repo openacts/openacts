@@ -24,6 +24,7 @@ PENDING = ""
 class SourceState:
     digest: str
     title: str
+    receipt_name: str = ""
     pages: int | None = None
     text_layer: str | None = None
     document_route: str | None = None
@@ -142,7 +143,9 @@ def survey(cache_root: Path, corpus_root: Path | None = None) -> list[SourceStat
         if not digest or digest in states:
             continue
         states[digest] = SourceState(
-            digest=digest, title=source.get("document_title") or digest
+            digest=digest,
+            title=source.get("document_title") or digest,
+            receipt_name=receipt.name,
         )
 
     candidates = _candidates_by_digest(cache_root)
@@ -213,13 +216,27 @@ def _next_stage(state: SourceState) -> str | None:
     return None
 
 
-def titles_by_digest(cache_root: Path) -> dict[str, str]:
-    return {state.digest: state.title for state in survey(cache_root)}
+def labels(cache_root: Path) -> dict[str, str]:
+    """Act titles under every name an artifact can be offered by.
+
+    Most artifacts carry their Source digest in the filename, but a run receipt
+    is named for the request that produced it, so it is keyed by its own name.
+    A digest is eight hex characters and a receipt name ends in `.json`, so the
+    two never collide.
+    """
+    found: dict[str, str] = {}
+    for state in survey(cache_root):
+        found[state.digest] = state.title
+        if state.receipt_name:
+            found[state.receipt_name] = state.title
+    return found
 
 
-def label_for(name: str, titles: dict[str, str]) -> str:
-    """An artifact filename carries its Source digest between two hyphens."""
-    for part in Path(name).stem.split("-"):
-        if part in titles:
-            return f"{titles[part]} - {name}"
-    return name
+def label_for(name: str, names: dict[str, str]) -> str:
+    title = names.get(name)
+    if title is None:
+        for part in Path(name).stem.split("-"):
+            if part in names:
+                title = names[part]
+                break
+    return f"{title} - {name}" if title else name

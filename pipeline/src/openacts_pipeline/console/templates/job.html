@@ -4,7 +4,7 @@
 {% block body %}
 <p><code>{{ command }}</code></p>
 <p>job <code>{{ job.job_id }}</code>
-{%- if job.execute %} &middot; <b>execute</b>{% else %} &middot; dry run{% endif %}
+{%- if job.execute %} &middot; <b>{{ job.mode }}</b>{% else %} &middot; {{ job.mode }}{% endif %}
 {%- if job.running %} &middot; <form method="post" action="/jobs/{{ job.job_id }}/stop"
 style="display:inline"><button>stop</button></form>{% endif %}</p>
 

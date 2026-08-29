@@ -25,8 +25,8 @@ from openacts_pipeline.console.registry import BY_NAME, STAGES, artifacts
 from openacts_pipeline.console.state import (
     STAGE_ORDER,
     label_for,
+    labels,
     survey,
-    titles_by_digest,
 )
 from openacts_pipeline.corpus import REVIEWED_FIDELITIES, review
 
@@ -117,11 +117,11 @@ def create_app(cache_root: Path, project_root: Path) -> FastAPI:
         stage = BY_NAME.get(name)
         if stage is None:
             raise HTTPException(status_code=404, detail=f"no stage named {name}")
-        titles = titles_by_digest(cache_root)
+        names = labels(cache_root)
 
         def labelled(folder: str) -> list[tuple[str, str]]:
             return [
-                (entry, label_for(entry, titles))
+                (entry, label_for(entry, names))
                 for entry in artifacts(cache_root, folder)
             ]
 
