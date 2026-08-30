@@ -20,6 +20,13 @@ def test_structure_settings_are_typed_and_fail_loudly() -> None:
     assert settings.concurrency == 4
     assert settings.max_repair_rounds == 3
     assert settings.max_total_tokens == 2_000_000
+    assert settings.max_unit_characters == 75_000
+    assert (
+        StructureSettings.from_env(
+            {**deepseek, "OPENACTS_STRUCTURE_MAX_UNIT_CHARACTERS": "40000"}
+        ).max_unit_characters
+        == 40_000
+    )
 
     with pytest.raises(PipelineError) as missing:
         StructureSettings.from_env({"OPENACTS_MODEL_BACKEND": "deepseek"})

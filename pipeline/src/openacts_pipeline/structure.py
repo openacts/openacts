@@ -43,6 +43,7 @@ from openacts_pipeline.structure_audit import (
     matches_source_closely,
     normalized_source_pages,
     spans_page_break,
+    table_cell_tokens_present,
 )
 from openacts_pipeline.structure_codex import run_codex
 from openacts_pipeline.structure_prompts import (
@@ -76,7 +77,7 @@ from openacts_pipeline.structure_schema import (
 
 STRUCTURE_VERSION = 7
 SUPPORTED_EXTRACTION_VERSIONS = {1, 2}
-PROMPT_VERSION = 25
+PROMPT_VERSION = 26
 MAX_OUTPUT_TOKENS = 384_000
 TRANSIENT_MODEL_STATUSES = {408, 429, 500, 502, 503, 504}
 
@@ -168,17 +169,20 @@ PROMOTED_MARKER = re.compile(
 )
 PLAN_SCOPE_MARKER = re.compile(
     r"(?m)^[ \t]*(?:\d+[a-z]?\.[ \t]*(?:[—–-][ \t]*)?)?"
-    r"\((?:\d+[a-z]?|[a-z]+|[ivxlcdm]+)[ \t]*\)",
+    # A marker is never a whole word. `viii` is the longest real one, and `via`
+    # and `vib` are not roman-matchable, so the bound cannot drop below four.
+    r"\((?:\d+[a-z]?|[a-z]{1,4}|[ivxlcdm]+)[ \t]*\)",
     re.IGNORECASE,
 )
+# A gazette closes with the bill-schedule appendix, whose numbered table columns
+# read as addressable markers but carry no enacted text.
+BILL_SCHEDULE_HEADING = r"schedule to the .{0,120}?bills?,? *\d{4}"
 EXCLUDED_PLAN_HEADING = re.compile(
     r"(?im)^[ \t]*(foreword|preface|arrangement of "
     r"(?:sections|articles|regulations|rules)|table of contents|"
-    r"explanatory (?:memorandum|note)|"
-    # A gazette closes with the bill-schedule appendix, whose numbered table
-    # columns read as addressable markers but carry no enacted text.
-    r"schedule to the .{0,120}?bills?,? *\d{4})[ \t]*$"
+    r"explanatory (?:memorandum|note)|" + BILL_SCHEDULE_HEADING + r")[ \t]*$"
 )
+BILL_SCHEDULE_APPENDIX = re.compile(BILL_SCHEDULE_HEADING, re.IGNORECASE)
 STRUCTURAL_LIST_STYLES = {
     "decimal",
     "lower_alpha",
@@ -847,11 +851,21 @@ def _validate_draft(
                 # Extraction damage is the reviewer's to adjudicate, not a reason
                 # to reject a draft and spend another model pass; the audit records
                 # the exact difference against the provision.
-                if not matches_source_closely(
-                    normalized_text, normalized_source
-                ) and not spans_page_break(
-                    normalized_text,
-                    [normalized_pages.get(pdf_page, "") for pdf_page in pdf_pages],
+                if (
+                    not matches_source_closely(normalized_text, normalized_source)
+                    and not spans_page_break(
+                        normalized_text,
+                        [
+                            normalized_pages.get(pdf_page, "")
+                            for pdf_page in pdf_pages
+                        ],
+                    )
+                    # A table cell carries the whole table's page list, so it can
+                    # match neither contiguously nor in page order.
+                    and not (
+                        isinstance(block, DraftTableBlock)
+                        and table_cell_tokens_present(text, normalized_source)
+                    )
                 ):
                     raise PipelineError(
                         "source_text_mismatch",
@@ -974,7 +988,16 @@ def _has_operative_marker(text: str) -> bool:
     return any(match.start() < limit for match in PLAN_SCOPE_MARKER.finditer(text))
 
 
-def _validate_plan(plan: StructurePlan, pages: list[dict[str, Any]]) -> None:
+def _starts_bill_schedule(text: str) -> bool:
+    # A rotated table header breaks the heading across lines, so match it flat.
+    return bool(BILL_SCHEDULE_APPENDIX.search(" ".join(text.split())))
+
+
+def _validate_plan(
+    plan: StructurePlan,
+    pages: list[dict[str, Any]],
+    max_unit_characters: int | None = None,
+) -> None:
     page_count = len(pages)
     if len(plan.units) > 64:
         raise PipelineError(
@@ -1030,14 +1053,20 @@ def _validate_plan(plan: StructurePlan, pages: list[dict[str, Any]]) -> None:
                 f"{excluded_heading.group(1).casefold()} on PDF page "
                 f"{page['pdf_page']}"
             )
-    outside_markers = [
-        page["pdf_page"]
-        for page in pages
-        if not (
-            plan.legal_start_pdf_page <= page["pdf_page"] <= plan.legal_end_pdf_page
-        )
-        and _has_operative_marker(page["text"])
-    ]
+    outside_markers: list[int] = []
+    in_appendix = False
+    for page in sorted(pages, key=lambda page: page["pdf_page"]):
+        if plan.legal_start_pdf_page <= page["pdf_page"] <= plan.legal_end_pdf_page:
+            continue
+        if page["pdf_page"] > plan.legal_end_pdf_page and (
+            in_appendix or _starts_bill_schedule(page["text"])
+        ):
+            # The appendix closes the gazette, so once it opens every remaining
+            # page is publishing matter however its columns break across lines.
+            in_appendix = True
+            continue
+        if _has_operative_marker(page["text"]):
+            outside_markers.append(page["pdf_page"])
     if (
         terminator_offset is not None
         and final_page is not None
@@ -1096,6 +1125,23 @@ def _validate_plan(plan: StructurePlan, pages: list[dict[str, Any]]) -> None:
                     f"{unit.unit_id} {field} {value!r} is not recoverable from "
                     f"starting PDF page {unit.start_pdf_page}; use exact printed "
                     "text or null"
+                )
+        if max_unit_characters is not None:
+            size = len(
+                build_raw_text(
+                    [
+                        page
+                        for page in pages
+                        if unit.start_pdf_page <= page["pdf_page"] <= unit.end_pdf_page
+                    ]
+                )
+            )
+            if size > max_unit_characters:
+                issues.append(
+                    f"unit {unit.unit_id} spans {size} characters over PDF pages "
+                    f"{unit.start_pdf_page}-{unit.end_pdf_page}, above the "
+                    f"{max_unit_characters} character limit; split it along its "
+                    "printed Parts"
                 )
         identities.add(unit.unit_id)
         covered.update(range(unit.start_pdf_page, unit.end_pdf_page + 1))
@@ -1313,7 +1359,9 @@ def structure(
         unit_scope=_unit_scope,
         repair_scope=_repair_scope,
         pages_text=pages_text,
-        validate_plan=lambda plan: _validate_plan(plan, extraction["pages"]),
+        validate_plan=lambda plan: _validate_plan(
+            plan, extraction["pages"], active_settings.max_unit_characters
+        ),
         validate_unit=lambda draft, unit: _validate_draft(
             draft,
             allowed_types=UNIT_NODE_TYPES[unit.kind],

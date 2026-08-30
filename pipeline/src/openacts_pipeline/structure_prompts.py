@@ -77,8 +77,11 @@ Within each Schedule, use this hierarchy when the printed levels exist:
 schedule -> optional schedule_part -> schedule_paragraph ->
 schedule_subparagraph -> paragraph -> subparagraph. The first parenthesised
 subdivision beneath a numbered schedule paragraph is a schedule_subparagraph
-whether its marker is `(1)` or `(a)`. Preserve the printed Schedule label, such
-as `SCHEDULE`, `FIRST SCHEDULE`, or `SECOND SCHEDULE`, exactly in display_label.
+whether its marker is `(1)` or `(a)`. When a Schedule prints no numbered
+paragraph and its first subdivision is parenthesised, those items are
+schedule_paragraph, because paragraph may never be a direct child of schedule.
+Preserve the printed Schedule label, such as `SCHEDULE`, `FIRST SCHEDULE`, or
+`SECOND SCHEDULE`, exactly in display_label.
 Never emit part, section, or subsection anywhere inside a Schedule: map printed
 `PART I` to schedule_part and each numbered `1.` item to schedule_paragraph.
 Definitions inside a Schedule remain definition nodes because there is no
@@ -150,6 +153,10 @@ the title, long title, preamble, and enacting formula when present. When front
 matter and the first operative root share a PDF page, both units may include
 that boundary page. Do not use a Part as a top-level unit when it is printed
 inside a Chapter; use the Chapter so the ancestor relationship is preserved.
+A unit must still stay small enough to structure in one pass. When a Chapter
+or Schedule runs beyond roughly 30 printed pages, split it along its own
+printed Parts and derive each unit_id from its parent, such as
+chapter-02-part-01. That split outranks keeping the Chapter whole.
 
 Units must be in legal reading order, collectively cover every page in the
 legal range, and overlap only on a shared boundary page. Give each unit a stable
