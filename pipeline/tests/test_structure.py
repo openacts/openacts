@@ -317,6 +317,34 @@ def test_plan_cannot_exclude_pages_with_addressable_legal_markers() -> None:
         )
 
 
+def test_plan_rejects_a_unit_above_the_character_budget() -> None:
+    """An oversized unit returns an incomplete draft or exhausts the timeout."""
+    pages = [
+        {"pdf_page": page, "text": f"{page}. Heading\n" + "wording " * 900}
+        for page in (1, 2)
+    ]
+    plan = StructurePlan.model_validate(
+        {
+            "legal_start_pdf_page": 1,
+            "legal_end_pdf_page": 2,
+            "units": [
+                {
+                    "unit_id": "body",
+                    "kind": "body",
+                    "start_pdf_page": 1,
+                    "end_pdf_page": 2,
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(PipelineError, match="above the 5000 character limit"):
+        structure_module._validate_plan(plan, pages, 5000)
+
+    structure_module._validate_plan(plan, pages, 100_000)
+    structure_module._validate_plan(plan, pages)
+
+
 def test_unit_validation_uses_plan_authoritative_root_metadata() -> None:
     unit = StructureUnit.model_validate(
         {
@@ -723,6 +751,144 @@ def test_replan_uses_new_unit_checkpoint_namespace(tmp_path: Path) -> None:
     assert result["summary"]["repair_rounds"] == 1
     assert list((cache_root / "structure-work").glob("*/001-body-01.json"))
     assert list((cache_root / "structure-work").glob("*/101-body-01.json"))
+
+
+def test_replan_reuses_a_unit_whose_definition_did_not_change(tmp_path: Path) -> None:
+    """A replan rewrites the units it changes; re-running the rest buys nothing."""
+    cache_root = tmp_path / "source-cache"
+    extraction = cache_root / "extractions/extract.json"
+    extraction.parent.mkdir(parents=True)
+    pages = [
+        {"pdf_page": 1, "text": "1. First\nFirst wording."},
+        {"pdf_page": 2, "text": "2. Second\nSecond wording."},
+    ]
+    extraction.write_text(
+        json.dumps(
+            {
+                "stage": "extract",
+                "status": "success",
+                "extraction_version": 2,
+                "source_id": SOURCE_ID,
+                "page_count": 2,
+                "pages": [
+                    {**page, "text_characters": len(page["text"])} for page in pages
+                ],
+                "result_path": "extractions/extract.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    unchanged = {
+        "unit_id": "body-01",
+        "kind": "body",
+        "start_pdf_page": 1,
+        "end_pdf_page": 1,
+    }
+    initial_plan = StructurePlan.model_validate(
+        {
+            "legal_start_pdf_page": 1,
+            "legal_end_pdf_page": 2,
+            "units": [
+                unchanged,
+                {
+                    "unit_id": "body-02",
+                    "kind": "body",
+                    "start_pdf_page": 2,
+                    "end_pdf_page": 2,
+                },
+            ],
+        }
+    )
+    revised_plan = StructurePlan.model_validate(
+        {
+            "legal_start_pdf_page": 1,
+            "legal_end_pdf_page": 2,
+            "units": [
+                unchanged,
+                {
+                    "unit_id": "body-02b",
+                    "kind": "body",
+                    "start_pdf_page": 2,
+                    "end_pdf_page": 2,
+                },
+            ],
+        }
+    )
+    first = StructureDraft.model_validate(
+        {"nodes": [{**_node("section", "1.", text="First wording."), "heading": "First"}]}
+    )
+    second = StructureDraft.model_validate(
+        {
+            "nodes": [
+                {
+                    "node_type": "section",
+                    "display_label": "2.",
+                    "heading": "Second",
+                    "pdf_page": 2,
+                    "content_blocks": [
+                        {"kind": "text", "text": "Second wording.", "pdf_pages": [2]}
+                    ],
+                }
+            ]
+        }
+    )
+    plan_calls = 0
+    page_one_calls = 0
+    page_two_calls = 0
+
+    async def runner(
+        raw_text: str,
+        _: StructureSettings,
+        __: str,
+        output_type: type[object],
+        validate: object,
+    ) -> ModelRun:
+        nonlocal plan_calls, page_one_calls, page_two_calls
+        assert callable(validate)
+        if output_type is StructurePlan:
+            plan_calls += 1
+            output = initial_plan if plan_calls == 1 else revised_plan
+        elif output_type is RepairPlan:
+            output = RepairPlan.model_validate(
+                {
+                    "decisions": [
+                        {
+                            "unit_id": "body-02",
+                            "action": "replan_document",
+                            "reason": "the original unit boundary was wrong",
+                        }
+                    ]
+                }
+            )
+        elif "First wording." in raw_text:
+            page_one_calls += 1
+            output = first
+        else:
+            page_two_calls += 1
+            output = StructureDraft(nodes=[]) if page_two_calls == 1 else second
+        validate(output)
+        return ModelRun(
+            output=output,
+            model="model",
+            output_mode="tool",
+            latency_seconds=0.1,
+            usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+        )
+
+    result = structure(
+        extraction,
+        execute=True,
+        cache_root=cache_root,
+        settings=StructureSettings("key", "https://example.com", "model", 30),
+        primary_runner=runner,
+    )
+
+    assert result["summary"]["repair_rounds"] == 1
+    assert page_one_calls == 1
+    work = cache_root / "structure-work"
+    assert list(work.glob("*/001-body-01.json"))
+    assert not list(work.glob("*/101-body-01.json"))
+    assert list(work.glob("*/102-body-02b.json"))
 
 
 def test_rejected_proviso_draft_is_preserved_and_repaired(
@@ -1711,6 +1877,101 @@ def test_plan_ignores_markers_in_the_bill_schedule_appendix() -> None:
                 "SCHEDULE TO THE NIGERIA REVENUE SERVICE (ESTABLISHMENT) BILL, 2025\n"
                 "(1)\nShort Title\n(2)\nLong Title\n(3)\nSummary\n"
             ),
+        },
+    ]
+    plan = StructurePlan.model_validate(
+        {
+            "legal_start_pdf_page": 1,
+            "legal_end_pdf_page": 2,
+            "legal_end_terminator": "I certify, in accordance with",
+            "units": [
+                {
+                    "unit_id": "body",
+                    "kind": "body",
+                    "start_pdf_page": 1,
+                    "end_pdf_page": 2,
+                }
+            ],
+        }
+    )
+
+    structure_module._validate_plan(plan, pages)
+
+
+def test_plan_ignores_word_parentheticals_in_a_split_bill_schedule_heading() -> None:
+    """A rotated bill-schedule header breaks its heading and its title column."""
+    pages = [
+        {"pdf_page": 1, "text": "1. Opening\nComplete opening wording."},
+        {
+            "pdf_page": 2,
+            "text": (
+                "(c)  the final paragraph of the Schedule.\n"
+                "I certify, in accordance with section 2 (1) of the Acts\n"
+                "Authentication Act, that this is a true copy.\n"
+            ),
+        },
+        {
+            "pdf_page": 3,
+            "text": (
+                "Tertiary Educations \nTrust Fund\n"
+                "(Establishment etc.) \nAct, the\n"
+                "Customs, Excise \nTarrif\nfs, etc.\n"
+                "(Consolidation) \nAct, the National\n"
+                "Capital(Incentives) \nAct to amend\n"
+                "SCHEDULE \nTO \nTHE NIGERIA\n T\nAX BILL, 2025\n"
+            ),
+        },
+        {
+            "pdf_page": 4,
+            "text": (
+                "Value Added Tax Act\n"
+                "(Modification) Order 2021, to\n"
+                "amend the Companies Income Tax\n"
+                "BOLA AHMED TINUBU, GCFR\n"
+            ),
+        },
+    ]
+    plan = StructurePlan.model_validate(
+        {
+            "legal_start_pdf_page": 1,
+            "legal_end_pdf_page": 2,
+            "legal_end_terminator": "I certify, in accordance with",
+            "units": [
+                {
+                    "unit_id": "body",
+                    "kind": "body",
+                    "start_pdf_page": 1,
+                    "end_pdf_page": 2,
+                }
+            ],
+        }
+    )
+
+    structure_module._validate_plan(plan, pages)
+
+
+def test_plan_ignores_a_split_bill_schedule_heading_across_its_pages() -> None:
+    """A rotated header breaks the heading while its columns stay marker-shaped."""
+    pages = [
+        {"pdf_page": 1, "text": "1. Opening\nComplete opening wording."},
+        {
+            "pdf_page": 2,
+            "text": (
+                "(c)  the final paragraph of the Schedule.\n"
+                "I certify, in accordance with section 2 (1) of the Acts\n"
+                "Authentication Act, that this is a true copy.\n"
+            ),
+        },
+        {
+            "pdf_page": 3,
+            "text": (
+                "SCHEDULE \nTO \nTHE NIGERIA\n T\nAX BILL, 2025\n"
+                "(1)\nShort Title\nof the Bill\n(2)\nLong Title of the\nBill\n"
+            ),
+        },
+        {
+            "pdf_page": 4,
+            "text": "(5)\nDate Passed by\nthe Senate\n28th May, 2025\n",
         },
     ]
     plan = StructurePlan.model_validate(

@@ -1,4 +1,9 @@
-from openacts_pipeline.structure_audit import audit_drafts, matches_source_closely
+from openacts_pipeline.structure_audit import (
+    _normalized,
+    audit_drafts,
+    matches_source_closely,
+    table_cell_tokens_present,
+)
 from openacts_pipeline.structure_schema import StructureDraft
 
 
@@ -680,3 +685,20 @@ def test_matches_source_closely_rejects_invented_wording() -> None:
     )
     invented = source + "andmayimposeafineoftenmillionnaira"
     assert not matches_source_closely(invented, source)
+
+
+def test_table_cell_tokens_survive_column_reordering() -> None:
+    """A multi-column table extracts column by column, not in reading order."""
+    source = _normalized(
+        "Sub-Sector S/N Priority Product Threshold Sunset\n"
+        "Manufacture of\n"
+        "N500m 15 years\n"
+        "starches and starch products.\n"
+    )
+    cell = "Manufacture of starches and starch products."
+
+    assert not matches_source_closely(_normalized(cell), source)
+    assert table_cell_tokens_present(cell, source)
+    assert not table_cell_tokens_present(
+        "Manufacture of dilithium regulators", source
+    )

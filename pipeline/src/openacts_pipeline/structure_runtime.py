@@ -787,8 +787,19 @@ class PlanNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
                 await asyncio.sleep(random.uniform(0.25, 1.0))
         else:
             raise AssertionError("planner request loop did not terminate")
+        previous_results = ctx.state.unit_results
         ctx.state.plan = StructurePlan.model_validate(run.output.model_dump())
-        ctx.state.unit_results.clear()
+        # A replan rewrites the units it wants to change and leaves the rest
+        # identical. Re-running an untouched unit spends a model call to
+        # reproduce a draft already in hand, so carry those forward; a unit that
+        # failed is carried by its issue, not its draft, and must be retried.
+        ctx.state.unit_results = {
+            unit.unit_id: result
+            for unit in ctx.state.plan.units
+            if (result := previous_results.get(unit.unit_id)) is not None
+            and result.validation_issue is None
+            and result.unit == unit
+        }
         ctx.state.audit = None
         ctx.state.pass_records.append(_pass_record(pass_name, run, reused))
         _enforce_token_budget(ctx.state, ctx.deps)

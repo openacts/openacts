@@ -64,6 +64,9 @@ NEAR_MATCH_MIN_LENGTH = 40
 # Furniture a sentence can straddle at a page break. Measured across the
 # Electoral Act's 23 page-spanning blocks the largest was 172 characters.
 MAX_PAGE_BREAK_GAP = 400
+# Short words match anywhere in a page of prose, so only substantial ones
+# carry evidence that a cell came from the source.
+MIN_TABLE_CELL_TOKEN = 4
 
 
 class AuditIssue(BaseModel):
@@ -661,6 +664,21 @@ def spans_page_break(needle: str, page_texts: list[str]) -> bool:
 def matches_source_closely(needle: str, haystack: str) -> bool:
     """Whether normalized text differs from source only by extraction damage."""
     return needle in haystack or near_source_window(needle, haystack) is not None
+
+
+def table_cell_tokens_present(text: str, source: str) -> bool:
+    """Whether every substantial word of a table cell appears in the source.
+
+    A multi-column table extracts column by column rather than in reading order,
+    so a cell's wording is present but never contiguous. Tokens survive that
+    reordering where a substring or windowed match cannot.
+    """
+    tokens = {
+        normalized
+        for token in re.findall(r"[^\W_]+", text)
+        if len(normalized := _normalized(token)) >= MIN_TABLE_CELL_TOKEN
+    }
+    return bool(tokens) and all(token in source for token in tokens)
 
 
 def _claim_near_match(

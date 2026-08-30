@@ -12,6 +12,9 @@ DEFAULT_STRUCTURE_TIMEOUT_SECONDS = 300
 DEFAULT_STRUCTURE_CONCURRENCY = 4
 DEFAULT_STRUCTURE_MAX_REPAIR_ROUNDS = 3
 DEFAULT_STRUCTURE_MAX_TOTAL_TOKENS = 2_000_000
+# The largest unit codex-default has structured successfully is 73k characters;
+# 90k and above have returned incomplete drafts or exhausted the request timeout.
+DEFAULT_STRUCTURE_MAX_UNIT_CHARACTERS = 75_000
 DEFAULT_MODEL_BACKEND = "codex"
 DEFAULT_CODEX_REASONING_EFFORT = "low"
 DEFAULT_CODEX_MODEL_LABEL = "codex-default"
@@ -51,6 +54,7 @@ class StructureSettings:
     concurrency: int = DEFAULT_STRUCTURE_CONCURRENCY
     max_repair_rounds: int = DEFAULT_STRUCTURE_MAX_REPAIR_ROUNDS
     max_total_tokens: int = DEFAULT_STRUCTURE_MAX_TOTAL_TOKENS
+    max_unit_characters: int = DEFAULT_STRUCTURE_MAX_UNIT_CHARACTERS
     backend: str = DEFAULT_MODEL_BACKEND
     codex_reasoning_effort: str = DEFAULT_CODEX_REASONING_EFFORT
 
@@ -95,6 +99,10 @@ class StructureSettings:
             "OPENACTS_STRUCTURE_MAX_TOTAL_TOKENS",
             DEFAULT_STRUCTURE_MAX_TOTAL_TOKENS,
         )
+        max_unit_characters = positive_integer(
+            "OPENACTS_STRUCTURE_MAX_UNIT_CHARACTERS",
+            DEFAULT_STRUCTURE_MAX_UNIT_CHARACTERS,
+        )
 
         # The work key is derived from base_url and primary_model, so the codex
         # backend must report its own pair or its checkpoints collide with DeepSeek's.
@@ -118,6 +126,7 @@ class StructureSettings:
             concurrency=concurrency,
             max_repair_rounds=repair_rounds,
             max_total_tokens=max_total_tokens,
+            max_unit_characters=max_unit_characters,
             backend=backend,
             codex_reasoning_effort=values.get(
                 "OPENACTS_CODEX_REASONING_EFFORT", DEFAULT_CODEX_REASONING_EFFORT
