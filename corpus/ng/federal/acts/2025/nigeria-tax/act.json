@@ -1,0 +1,52 @@
+{
+  "schema_version": "0.1.0",
+  "record_type": "act",
+  "act_id": "ng-federal-act-2025-nigeria-tax",
+  "jurisdiction": "ng-federal",
+  "country_code": "NG",
+  "titles": {
+    "official": "Nigeria Tax Act, 2025",
+    "short": null,
+    "long": null
+  },
+  "year": 2025,
+  "number": "117",
+  "citation": "Nigeria Tax Act, 2025",
+  "text_kind": "as_enacted",
+  "dates": {
+    "assent": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    },
+    "publication": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    },
+    "commencement": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    },
+    "repeal": {
+      "date": null,
+      "null_reason": "not_researched",
+      "source_ids": []
+    }
+  },
+  "aliases": [],
+  "status": "in_force",
+  "checked_through_date": "2026-08-31",
+  "status_source_ids": [
+    "sha256:41abf6887bc58a3c97116fd9a048aa91ad49c1cab156f39065a58401c0fce94f"
+  ],
+  "source_refs": [
+    {
+      "source_id": "sha256:41abf6887bc58a3c97116fd9a048aa91ad49c1cab156f39065a58401c0fce94f",
+      "role": "authoritative_text",
+      "scope_note": null
+    }
+  ],
+  "editorial_notes": []
+}
