@@ -7,7 +7,7 @@ import hashlib
 import json
 import random
 from collections import Counter, defaultdict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -93,6 +93,9 @@ ModelRunner = Callable[
     Awaitable[ModelRun],
 ]
 ProgressReporter = Callable[[dict[str, Any]], None]
+
+ISSUE_MASS_SHARE = 0.8
+ISSUE_MASS_UNIT_LIMIT = 8
 
 
 def _checkpoint_attempts(
@@ -378,6 +381,7 @@ UnitScopeBuilder = Callable[
     [StructureUnit, list[AuditIssue], StructureDraft | None], str
 ]
 RepairScopeBuilder = Callable[[StructureUnit, list[AuditIssue], StructureDraft], str]
+SplitScopeBuilder = Callable[[StructureUnit], str]
 PagesTextBuilder = Callable[[int, int], str]
 
 
@@ -393,6 +397,7 @@ class StructureDeps:
     plan_scope: PlanScopeBuilder
     unit_scope: UnitScopeBuilder
     repair_scope: RepairScopeBuilder
+    split_scope: SplitScopeBuilder
     pages_text: PagesTextBuilder
     validate_plan: PlanValidator
     validate_unit: UnitValidator
@@ -409,6 +414,7 @@ class StructureState:
     pass_records: list[dict[str, Any]] = field(default_factory=list)
     repair_round: int = 0
     plan_revision: int = 0
+    split_round: int = 0
 
 
 def _emit(deps: StructureDeps, event: str, **metadata: Any) -> None:
@@ -512,6 +518,7 @@ def _write_candidate(state: StructureState, deps: StructureDeps) -> Path:
                 "unit": unit.model_dump(mode="json"),
                 "selected_pass": result.pass_name,
                 "checkpoint_reused": result.checkpoint_reused,
+                "output_mode": result.run.output_mode,
                 "validation_issue": (
                     result.validation_issue.model_dump(mode="json")
                     if result.validation_issue is not None
@@ -585,7 +592,11 @@ def _load_candidate_state(deps: StructureDeps) -> StructureState:
                 run=ModelRun(
                     output=draft,
                     model=deps.settings.primary_model,
-                    output_mode="candidate_resume",
+                    output_mode=(
+                        "failed"
+                        if item.get("output_mode") == "failed"
+                        else "candidate_resume"
+                    ),
                     latency_seconds=0.0,
                     usage={"requests": 0, "input_tokens": 0, "output_tokens": 0},
                 ),
@@ -687,10 +698,34 @@ def _audit_results(
     )
 
 
-def _issue_summary(report: AuditReport) -> str:
+def _units_by_issue_mass(
+    report: AuditReport,
+    *,
+    share: float = ISSUE_MASS_SHARE,
+    limit: int = ISSUE_MASS_UNIT_LIMIT,
+) -> list[str]:
+    counts = Counter(
+        issue.unit_id for issue in report.issues if issue.unit_id is not None
+    )
+    if not counts:
+        return []
+    total = sum(counts.values())
+    selected: list[str] = []
+    covered = 0
+    for unit_id, count in counts.most_common(limit):
+        selected.append(unit_id)
+        covered += count
+        if covered >= total * share:
+            break
+    return sorted(selected)
+
+
+def _issue_summary(report: AuditReport, units: Collection[str] | None = None) -> str:
     grouped: defaultdict[str, list[AuditIssue]] = defaultdict(list)
     for issue in report.issues:
-        grouped[issue.unit_id or "unassigned"].append(issue)
+        unit_id = issue.unit_id or "unassigned"
+        if units is None or unit_id in units:
+            grouped[unit_id].append(issue)
     summary: list[dict[str, Any]] = []
     for unit_id, issues in sorted(grouped.items()):
         summary.append(
@@ -820,11 +855,163 @@ class PlanNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
         return RunUnitsNode()
 
 
+def _spliced_units(
+    plan: StructurePlan, unit: StructureUnit, parts: list[StructureUnit]
+) -> list[StructureUnit]:
+    units = list(plan.units)
+    position = next(
+        index for index, existing in enumerate(units) if existing.unit_id == unit.unit_id
+    )
+    units[position : position + 1] = parts
+    return units
+
+
+def _validate_split(plan: StructurePlan, unit: StructureUnit) -> None:
+    if len(plan.units) < 2:
+        raise PipelineError(
+            "invalid_structure_plan",
+            f"split of {unit.unit_id} must return at least two units",
+        )
+    covered: set[int] = set()
+    for part in plan.units:
+        covered.update(range(part.start_pdf_page, part.end_pdf_page + 1))
+    if covered != set(range(unit.start_pdf_page, unit.end_pdf_page + 1)):
+        raise PipelineError(
+            "invalid_structure_plan",
+            f"split of {unit.unit_id} must cover PDF pages "
+            f"{unit.start_pdf_page} through {unit.end_pdf_page} exactly",
+        )
+
+
+async def _split_unit(
+    ctx: GraphRunContext[StructureState, StructureDeps],
+    unit: StructureUnit,
+    index: int,
+) -> list[StructureUnit]:
+    plan = ctx.state.plan
+    if plan is None:
+        raise PipelineError("structure_state_invalid", "split has no plan")
+    raw_text = ctx.deps.pages_text(unit.start_pdf_page, unit.end_pdf_page)
+    scope = ctx.deps.split_scope(unit)
+    pass_index = 5000 + ctx.state.split_round * 100 + index
+    pass_name = f"{unit.unit_id}-split"
+
+    def validate(output: BaseModel) -> None:
+        if not isinstance(output, StructurePlan):
+            raise PipelineError(
+                "model_invalid_output", "split returned the wrong schema"
+            )
+        _validate_split(output, unit)
+        ctx.deps.validate_plan(
+            plan.model_copy(
+                update={"units": _spliced_units(plan, unit, list(output.units))}
+            )
+        )
+
+    for attempt in _checkpoint_attempts(
+        cache_root=ctx.deps.cache_root,
+        work_key=ctx.deps.work_key,
+        pass_index=pass_index,
+        pass_name=pass_name,
+    ):
+        attempt_name = pass_name if attempt == 0 else f"{pass_name}-retry-1"
+        try:
+            run, reused = await run_checkpointed(
+                cache_root=ctx.deps.cache_root,
+                work_key=ctx.deps.work_key,
+                pass_index=pass_index,
+                pass_name=attempt_name,
+                source_id=ctx.deps.source_id,
+                raw_text=raw_text,
+                settings=ctx.deps.settings,
+                scope=scope,
+                output_type=StructurePlan,
+                runner=ctx.deps.runner,
+                validate=validate,
+                structure_version=ctx.deps.structure_version,
+                prompt_version=ctx.deps.prompt_version,
+            )
+        except RejectedCheckpoint as exc:
+            if not attempt:
+                scope += (
+                    "\n\nThe previous split failed deterministic validation. Return "
+                    "a complete corrected split in a fresh response.\nVALIDATION "
+                    f"ERROR\n{exc.validation_error.code}: {exc.validation_error}"
+                )
+                continue
+            _emit(
+                ctx.deps,
+                "unit_split_abandoned",
+                unit_id=unit.unit_id,
+                error_code=exc.validation_error.code,
+            )
+            return []
+        except PipelineError as exc:
+            if not exc.retryable or attempt:
+                _emit(
+                    ctx.deps,
+                    "unit_split_abandoned",
+                    unit_id=unit.unit_id,
+                    error_code=exc.code,
+                )
+                return []
+            await asyncio.sleep(random.uniform(0.25, 1.0))
+            continue
+        ctx.state.pass_records.append(_pass_record(attempt_name, run, reused))
+        return list(StructurePlan.model_validate(run.output.model_dump()).units)
+    raise AssertionError("split request loop did not terminate")
+
+
+async def _split_exhausted_units(
+    ctx: GraphRunContext[StructureState, StructureDeps],
+) -> bool:
+    plan = ctx.state.plan
+    if plan is None or ctx.state.split_round >= ctx.deps.settings.max_unit_splits:
+        return False
+    exhausted = [
+        unit
+        for unit in plan.units
+        if (result := ctx.state.unit_results.get(unit.unit_id)) is not None
+        and result.run.output_mode == "failed"
+        and unit.start_pdf_page < unit.end_pdf_page
+    ]
+    if not exhausted:
+        return False
+    ctx.state.split_round += 1
+    indexes = {unit.unit_id: index for index, unit in enumerate(plan.units, start=1)}
+    _emit(
+        ctx.deps,
+        "units_splitting",
+        split_round=ctx.state.split_round,
+        units=[unit.unit_id for unit in exhausted],
+    )
+    current = plan
+    split = False
+    for unit in exhausted:
+        parts = await _split_unit(ctx, unit, indexes[unit.unit_id])
+        if not parts:
+            continue
+        current = current.model_copy(
+            update={"units": _spliced_units(current, unit, parts)}
+        )
+        ctx.state.plan = current
+        del ctx.state.unit_results[unit.unit_id]
+        split = True
+        _emit(
+            ctx.deps,
+            "unit_split",
+            unit_id=unit.unit_id,
+            parts=[part.unit_id for part in parts],
+        )
+    _enforce_token_budget(ctx.state, ctx.deps)
+    return split
+
+
 @dataclass
 class RunUnitsNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
     async def run(
         self, ctx: GraphRunContext[StructureState, StructureDeps]
-    ) -> AuditNode:
+    ) -> AuditNode | RunUnitsNode:
         plan = ctx.state.plan
         if plan is None:
             raise PipelineError("structure_state_invalid", "unit execution has no plan")
@@ -1008,6 +1195,9 @@ class RunUnitsNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
                 )
             )
         _enforce_token_budget(ctx.state, ctx.deps)
+        if await _split_exhausted_units(ctx):
+            _write_state(ctx.state, ctx.deps, "units_split")
+            return RunUnitsNode()
         _write_state(ctx.state, ctx.deps, "units_structured")
         _emit(
             ctx.deps,
@@ -1064,7 +1254,14 @@ class AuditNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
         )
         if ctx.state.audit.passed:
             return FinalizeNode()
-        if ctx.state.repair_round >= ctx.deps.settings.max_repair_rounds:
+        undrafted = sorted(
+            unit_id
+            for unit_id, result in ctx.state.unit_results.items()
+            if result.run.output_mode == "failed"
+        )
+        if undrafted:
+            _emit(ctx.deps, "repair_skipped_undrafted_units", units=undrafted)
+        if undrafted or ctx.state.repair_round >= ctx.deps.settings.max_repair_rounds:
             if ctx.state.audit.reviewable:
                 _emit(
                     ctx.deps,
@@ -1094,9 +1291,7 @@ class CriticNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
         report = ctx.state.audit
         if plan is None or report is None:
             raise PipelineError("structure_state_invalid", "critic has no audit")
-        affected = sorted(
-            {issue.unit_id for issue in report.issues if issue.unit_id is not None}
-        )
+        affected = _units_by_issue_mass(report)
         if not affected:
             raise PipelineError(
                 "structure_audit_failed",
@@ -1111,7 +1306,7 @@ class CriticNode(BaseNode[StructureState, StructureDeps, WorkflowResult]):
             "decision for every affected unit unless replanning the whole document.\n"
             f"Affected units: {json.dumps(affected)}\n"
             f"Current plan: {plan.model_dump_json()}\n"
-            f"Audit: {_issue_summary(report)}"
+            f"Audit: {_issue_summary(report, affected)}"
         )
 
         def validate(output: BaseModel) -> None:

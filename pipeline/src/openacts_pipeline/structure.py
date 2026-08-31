@@ -140,6 +140,11 @@ UNIT_NODE_TYPES = {
         "form",
     },
 }
+SCHEDULE_NODE_VOCABULARY = {
+    "part": "schedule_part",
+    "section": "schedule_paragraph",
+    "subsection": "schedule_subparagraph",
+}
 CONTENT_OPTIONAL_LEAVES = {
     "document_title",
     "part",
@@ -193,7 +198,13 @@ STRUCTURAL_LIST_STYLES = {
 PARENT_NODE_TYPES = {
     "section": {"part", "chapter", "division", "cross_heading"},
     "subsection": {"section"},
-    "paragraph": {"section", "subsection", "definition", "schedule_subparagraph"},
+    "paragraph": {
+        "section",
+        "subsection",
+        "definition",
+        "schedule_paragraph",
+        "schedule_subparagraph",
+    },
     "subparagraph": {"paragraph"},
     "schedule_part": {"schedule"},
     "schedule_paragraph": {"schedule", "schedule_part", "cross_heading"},
@@ -624,6 +635,14 @@ def _recover_promoted_section_children(node: DraftNode) -> None:
         _recover_promoted_section_children(child)
 
 
+def _inside_schedule(unit: StructureUnit) -> bool:
+    return unit.kind == "schedule" or unit.unit_id.startswith("schedule-")
+
+
+def _unit_node_types(unit: StructureUnit) -> set[str]:
+    return UNIT_NODE_TYPES["schedule" if _inside_schedule(unit) else unit.kind]
+
+
 def _validate_draft(
     draft: StructureDraft,
     *,
@@ -643,16 +662,13 @@ def _validate_draft(
     ]
     for root in draft.nodes:
         _recover_promoted_section_children(root)
-    if target is not None and target.kind == "schedule":
+    if target is not None and _inside_schedule(target):
         # Printed Parts and numbered provisions retain their meaning inside a
         # Schedule; normalize provider vocabulary to the canonical context.
         for node in _walk_nodes(draft.nodes):
-            if node.node_type == "part":
-                node.node_type = "schedule_part"
-            elif node.node_type == "section":
-                node.node_type = "schedule_paragraph"
-            elif node.node_type == "subsection":
-                node.node_type = "schedule_subparagraph"
+            node.node_type = SCHEDULE_NODE_VOCABULARY.get(
+                node.node_type, node.node_type
+            )
     all_nodes = list(_walk_nodes(draft.nodes))
     unexpected = sorted(
         {node.node_type for node in all_nodes if node.node_type not in allowed_types}
@@ -669,8 +685,13 @@ def _validate_draft(
                 f"{target.unit_id} must return exactly one root",
             )
         root = draft.nodes[0]
+        expected_root = (
+            SCHEDULE_NODE_VOCABULARY.get(target.kind, target.kind)
+            if _inside_schedule(target)
+            else target.kind
+        )
         if (
-            root.node_type != target.kind
+            root.node_type != expected_root
             or _normalized(root.display_label or "")
             != _normalized(target.display_label or "")
             or (
@@ -687,6 +708,10 @@ def _validate_draft(
         root.display_label = target.display_label
         root.heading = target.heading
         root.pdf_page = target.start_pdf_page
+
+    schedule_fragment = (
+        target is not None and _inside_schedule(target) and target.kind != "schedule"
+    )
 
     def validate_node(
         node: Any,
@@ -749,7 +774,11 @@ def _validate_draft(
                 "paragraphs must be nested under their applicable subsection",
             )
         allowed_parents = PARENT_NODE_TYPES.get(node.node_type)
-        if parent is None and node.node_type in PARENT_REQUIRED_NODE_TYPES:
+        if (
+            parent is None
+            and node.node_type in PARENT_REQUIRED_NODE_TYPES
+            and not schedule_fragment
+        ):
             raise PipelineError(
                 "invalid_structure_output",
                 f"{node.node_type} must have a structural parent",
@@ -1202,6 +1231,22 @@ def _unit_scope(
     return scope
 
 
+def _split_scope(unit: StructureUnit) -> str:
+    identity = json.dumps(
+        unit.display_label or unit.heading or unit.kind, ensure_ascii=False
+    )
+    return (
+        f"Divide {identity} into consecutive smaller units for structuring. It "
+        f"spans PDF pages {unit.start_pdf_page} through {unit.end_pdf_page} and "
+        "did not structure in one pass. Return a plan whose legal scope is exactly "
+        f"PDF pages {unit.start_pdf_page} through {unit.end_pdf_page}, split along "
+        "the printed Parts or other top-level divisions it contains, in printed "
+        f"order and covering every page. Give each unit kind {json.dumps(unit.kind)} "
+        "and the exact printed label and heading of the division it covers. This "
+        "is a split of one unit, not a plan of the whole document."
+    )
+
+
 def _repair_scope(
     unit: StructureUnit,
     issues: list[Any],
@@ -1358,13 +1403,14 @@ def structure(
         plan_scope=_plan_scope,
         unit_scope=_unit_scope,
         repair_scope=_repair_scope,
+        split_scope=_split_scope,
         pages_text=pages_text,
         validate_plan=lambda plan: _validate_plan(
             plan, extraction["pages"], active_settings.max_unit_characters
         ),
         validate_unit=lambda draft, unit: _validate_draft(
             draft,
-            allowed_types=UNIT_NODE_TYPES[unit.kind],
+            allowed_types=_unit_node_types(unit),
             page_count=extraction["page_count"],
             pages=extraction["pages"],
             target=unit,

@@ -702,3 +702,78 @@ def test_table_cell_tokens_survive_column_reordering() -> None:
     assert not table_cell_tokens_present(
         "Manufacture of dilithium regulators", source
     )
+
+
+def test_audit_excludes_table_source_the_draft_holds_out_of_column_order() -> None:
+    pages = [
+        {
+            "pdf_page": 1,
+            "text": (
+                "SCHEDULE 10\n"
+                "S/N Sub-Sector Threshold Sunset\n"
+                "1 Manufacture of\n"
+                "N500m 15 years\n"
+                "starches and starch products.\n"
+                "2 Marine fishing and all\n"
+                "N250m 20 years\n"
+                "forms of aquaculture.\n"
+            ),
+        }
+    ]
+    draft = StructureDraft.model_validate(
+        {
+            "nodes": [
+                {
+                    "node_type": "schedule",
+                    "heading": "SCHEDULE 10",
+                    "pdf_page": 1,
+                    "children": [
+                        {
+                            "node_type": "table",
+                            "pdf_page": 1,
+                            "content_blocks": [
+                                {
+                                    "kind": "table",
+                                    "column_count": 4,
+                                    "header_row_count": 1,
+                                    "pdf_pages": [1],
+                                    "rows": [
+                                        ["S/N", "Sub-Sector", "Threshold", "Sunset"],
+                                        [
+                                            "1",
+                                            (
+                                                "Manufacture of starches and "
+                                                "starch products."
+                                            ),
+                                            "N500m",
+                                            "15 years",
+                                        ],
+                                        [
+                                            "2",
+                                            (
+                                                "Marine fishing and all forms "
+                                                "of aquaculture."
+                                            ),
+                                            "N250m",
+                                            "20 years",
+                                        ],
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    report = audit_drafts(
+        [("schedule-10", draft)],
+        pages=pages,
+        legal_start_pdf_page=1,
+        legal_end_pdf_page=1,
+    )
+
+    assert "tabular_layout" in {exclusion.reason for exclusion in report.exclusions}
+    assert report.source_coverage >= 0.95
+    assert not [issue for issue in report.issues if issue.code == "missing_source"]

@@ -2489,3 +2489,248 @@ def test_a_critic_that_keeps_returning_an_invalid_plan_is_not_fatal(
     events = [event["event"] for event in progress]
     assert "critic_unavailable" in events
     assert "audit_completed" in events
+
+
+def _write_two_page_extraction(cache_root: Path) -> Path:
+    pages = ["1. Alpha\nFirst wording.", "2. Beta\nSecond wording."]
+    extraction = cache_root / "extractions/extract.json"
+    extraction.parent.mkdir(parents=True)
+    extraction.write_text(
+        json.dumps(
+            {
+                "stage": "extract",
+                "status": "success",
+                "extraction_version": 2,
+                "source_id": SOURCE_ID,
+                "page_count": 2,
+                "pages": [
+                    {
+                        "pdf_page": index,
+                        "text": text,
+                        "text_characters": len(text),
+                    }
+                    for index, text in enumerate(pages, start=1)
+                ],
+                "result_path": "extractions/extract.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return extraction
+
+
+def _page_draft(label: str, heading: str, text: str, pdf_page: int) -> StructureDraft:
+    return StructureDraft.model_validate(
+        {
+            "nodes": [
+                {
+                    "node_type": "section",
+                    "display_label": label,
+                    "heading": heading,
+                    "pdf_page": pdf_page,
+                    "children": [],
+                    "content_blocks": [
+                        {"kind": "text", "text": text, "pdf_pages": [pdf_page]}
+                    ],
+                }
+            ]
+        }
+    )
+
+
+def test_unit_that_exhausts_its_attempts_is_split_instead_of_left_empty(
+    tmp_path: Path,
+) -> None:
+    cache_root = tmp_path / "source-cache"
+    extraction = _write_two_page_extraction(cache_root)
+    plan = StructurePlan.model_validate(
+        {
+            "legal_start_pdf_page": 1,
+            "legal_end_pdf_page": 2,
+            "units": [
+                {
+                    "unit_id": "body",
+                    "kind": "body",
+                    "start_pdf_page": 1,
+                    "end_pdf_page": 2,
+                }
+            ],
+        }
+    )
+    split = StructurePlan.model_validate(
+        {
+            "legal_start_pdf_page": 1,
+            "legal_end_pdf_page": 2,
+            "units": [
+                {
+                    "unit_id": "body-part-01",
+                    "kind": "body",
+                    "start_pdf_page": 1,
+                    "end_pdf_page": 1,
+                },
+                {
+                    "unit_id": "body-part-02",
+                    "kind": "body",
+                    "start_pdf_page": 2,
+                    "end_pdf_page": 2,
+                },
+            ],
+        }
+    )
+    drafts = {
+        1: _page_draft("1.", "Alpha", "First wording.", 1),
+        2: _page_draft("2.", "Beta", "Second wording.", 2),
+    }
+    progress: list[dict[str, object]] = []
+
+    async def runner(
+        raw_text: str,
+        _: StructureSettings,
+        scope: str,
+        output_type: type[object],
+        validate: object,
+    ) -> ModelRun:
+        if output_type is StructurePlan:
+            response: object = split if "split" in scope.casefold() else plan
+        elif "PDF PAGE 1 ---" in raw_text and "PDF PAGE 2 ---" in raw_text:
+            raise PipelineError(
+                "model_transient", "codex exec exceeded 900s", retryable=True
+            )
+        else:
+            response = drafts[1 if "PDF PAGE 1 ---" in raw_text else 2]
+        validate(response)
+        return ModelRun(
+            output=response,
+            model="model",
+            output_mode="tool",
+            latency_seconds=0.1,
+            usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+        )
+
+    result = structure(
+        extraction,
+        execute=True,
+        cache_root=cache_root,
+        settings=StructureSettings(
+            "key", "https://example.com", "model", 30, max_repair_rounds=0
+        ),
+        primary_runner=runner,
+        progress=progress.append,
+    )
+
+    events = [event["event"] for event in progress]
+    assert "unit_split" in events
+    assert events.index("unit_failed") < events.index("unit_split")
+    assert "audit_completed" in events
+    assert result["status"] == "success"
+    audit = next(event for event in progress if event["event"] == "audit_completed")
+    assert audit["claimed_characters"] == audit["source_characters"]
+    assert result["summary"]["units"] == 2
+    split_event = next(event for event in progress if event["event"] == "unit_split")
+    assert split_event["parts"] == ["body-part-01", "body-part-02"]
+
+
+def test_a_unit_that_cannot_be_split_is_not_sent_to_repair(tmp_path: Path) -> None:
+    cache_root = tmp_path / "source-cache"
+    extraction = _write_extraction(cache_root, "1. Alpha\nFirst wording.")
+    plan = StructurePlan.model_validate(
+        {
+            "legal_start_pdf_page": 1,
+            "legal_end_pdf_page": 1,
+            "units": [
+                {
+                    "unit_id": "body",
+                    "kind": "body",
+                    "start_pdf_page": 1,
+                    "end_pdf_page": 1,
+                }
+            ],
+        }
+    )
+    progress: list[dict[str, object]] = []
+
+    async def runner(
+        raw_text: str,
+        _: StructureSettings,
+        scope: str,
+        output_type: type[object],
+        validate: object,
+    ) -> ModelRun:
+        if output_type is not StructurePlan:
+            raise PipelineError(
+                "model_transient", "codex exec exceeded 900s", retryable=True
+            )
+        validate(plan)
+        return ModelRun(
+            output=plan,
+            model="model",
+            output_mode="tool",
+            latency_seconds=0.1,
+            usage={"requests": 1, "input_tokens": 10, "output_tokens": 5},
+        )
+
+    with pytest.raises(PipelineError) as excinfo:
+        structure(
+            extraction,
+            execute=True,
+            cache_root=cache_root,
+            settings=StructureSettings("key", "https://example.com", "model", 30),
+            primary_runner=runner,
+            progress=progress.append,
+        )
+
+    assert excinfo.value.code == "structure_audit_failed"
+    events = [event["event"] for event in progress]
+    assert "unit_split" not in events
+    assert "critic_started" not in events
+    assert "repairs_started" not in events
+
+
+def test_a_schedule_part_unit_keeps_schedule_vocabulary() -> None:
+    unit = StructureUnit.model_validate(
+        {
+            "unit_id": "schedule-01-part-02",
+            "kind": "part",
+            "display_label": "PART II",
+            "heading": None,
+            "start_pdf_page": 1,
+            "end_pdf_page": 1,
+        }
+    )
+    draft = StructureDraft.model_validate(
+        {
+            "nodes": [
+                {
+                    "node_type": "part",
+                    "display_label": "PART II",
+                    "pdf_page": 1,
+                    "children": [
+                        {
+                            "node_type": "section",
+                            "display_label": "1.",
+                            "pdf_page": 1,
+                            "content_blocks": [
+                                {
+                                    "kind": "text",
+                                    "text": "Exact wording.",
+                                    "pdf_pages": [1],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    pages = [{"pdf_page": 1, "text": "PART II\n1. Exact wording."}]
+
+    structure_module._validate_draft(
+        draft,
+        allowed_types=structure_module._unit_node_types(unit),
+        page_count=1,
+        pages=pages,
+        target=unit,
+    )
+
+    assert draft.nodes[0].node_type == "schedule_part"
+    assert draft.nodes[0].children[0].node_type == "schedule_paragraph"

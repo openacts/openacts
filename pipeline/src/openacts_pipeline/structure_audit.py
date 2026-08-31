@@ -94,6 +94,7 @@ class AuditExclusion(BaseModel):
         "recurring_header",
         "editorial_annotation",
         "post_operative_matter",
+        "tabular_layout",
     ]
     pdf_page: int
     source_line: int
@@ -738,6 +739,12 @@ def _audit(
     ordered = sorted(
         claims, key=lambda claim: len(_normalized(claim.text)), reverse=True
     )
+    tabular_text: defaultdict[int, list[str]] = defaultdict(list)
+    for claim in ordered:
+        if claim.description != "table cell":
+            continue
+        for pdf_page in claim.pdf_pages:
+            tabular_text[pdf_page].append(_normalized(claim.text))
     # Every claim gets its exact span before any claim is allowed a near match,
     # so a fuzzy match cannot absorb source another provision still needs.
     deferred: list[tuple[_Claim, bool]] = []
@@ -824,6 +831,22 @@ def _audit(
                 ledger.exclusions.append(
                     AuditExclusion(
                         reason="editorial_annotation",
+                        pdf_page=ledger.pdf_page,
+                        source_line=line,
+                        source_excerpt=text[:240],
+                        normalized_characters=len(indexes),
+                    )
+                )
+                continue
+            cells = tabular_text.get(ledger.pdf_page)
+            if cells and table_cell_tokens_present(
+                "".join(ledger.normalized[index] for index in indexes), " ".join(cells)
+            ):
+                for index in indexes:
+                    ledger.claimed[index] = 1
+                ledger.exclusions.append(
+                    AuditExclusion(
+                        reason="tabular_layout",
                         pdf_page=ledger.pdf_page,
                         source_line=line,
                         source_excerpt=text[:240],

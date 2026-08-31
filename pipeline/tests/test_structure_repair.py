@@ -128,3 +128,47 @@ def test_repair_patch_is_copy_on_write_and_only_accepts_audited_improvement() ->
     )
     with pytest.raises(PipelineError, match="children/99.*2 item"):
         apply_repair_patch(original, invalid_path)
+
+
+def test_critic_sees_only_the_units_holding_the_issue_mass() -> None:
+    from openacts_pipeline.structure_runtime import _units_by_issue_mass
+
+    def issues(unit_id: str, count: int) -> list[AuditIssue]:
+        return [
+            AuditIssue(
+                code="missing_source",
+                message="unclaimed",
+                pdf_page=1,
+                unit_id=unit_id,
+            )
+            for _ in range(count)
+        ]
+
+    report = _report(
+        *issues("chapter-08", 1062),
+        *issues("chapter-09", 805),
+        *issues("schedule-10", 319),
+        *[issue for index in range(29) for issue in issues(f"healthy-{index:02d}", 6)],
+        claimed=50,
+    )
+
+    assert _units_by_issue_mass(report) == ["chapter-08", "chapter-09", "schedule-10"]
+
+
+def test_issue_mass_selection_stays_bounded_when_issues_are_spread_evenly() -> None:
+    from openacts_pipeline.structure_runtime import _units_by_issue_mass
+
+    report = _report(
+        *[
+            AuditIssue(
+                code="missing_source",
+                message="unclaimed",
+                pdf_page=1,
+                unit_id=f"unit-{index:02d}",
+            )
+            for index in range(40)
+        ],
+        claimed=50,
+    )
+
+    assert len(_units_by_issue_mass(report)) == 8

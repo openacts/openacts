@@ -11,6 +11,7 @@ DEFAULT_PRIMARY_MODEL = "deepseek-v4-pro"
 DEFAULT_STRUCTURE_TIMEOUT_SECONDS = 300
 DEFAULT_STRUCTURE_CONCURRENCY = 4
 DEFAULT_STRUCTURE_MAX_REPAIR_ROUNDS = 3
+DEFAULT_STRUCTURE_MAX_UNIT_SPLITS = 2
 DEFAULT_STRUCTURE_MAX_TOTAL_TOKENS = 2_000_000
 # The largest unit codex-default has structured successfully is 73k characters;
 # 90k and above have returned incomplete drafts or exhausted the request timeout.
@@ -53,6 +54,7 @@ class StructureSettings:
     request_timeout_seconds: int
     concurrency: int = DEFAULT_STRUCTURE_CONCURRENCY
     max_repair_rounds: int = DEFAULT_STRUCTURE_MAX_REPAIR_ROUNDS
+    max_unit_splits: int = DEFAULT_STRUCTURE_MAX_UNIT_SPLITS
     max_total_tokens: int = DEFAULT_STRUCTURE_MAX_TOTAL_TOKENS
     max_unit_characters: int = DEFAULT_STRUCTURE_MAX_UNIT_CHARACTERS
     backend: str = DEFAULT_MODEL_BACKEND
@@ -95,6 +97,10 @@ class StructureSettings:
             "OPENACTS_STRUCTURE_MAX_REPAIR_ROUNDS",
             DEFAULT_STRUCTURE_MAX_REPAIR_ROUNDS,
         )
+        unit_splits = positive_integer(
+            "OPENACTS_STRUCTURE_MAX_UNIT_SPLITS",
+            DEFAULT_STRUCTURE_MAX_UNIT_SPLITS,
+        )
         max_total_tokens = positive_integer(
             "OPENACTS_STRUCTURE_MAX_TOTAL_TOKENS",
             DEFAULT_STRUCTURE_MAX_TOTAL_TOKENS,
@@ -125,6 +131,7 @@ class StructureSettings:
             request_timeout_seconds=timeout,
             concurrency=concurrency,
             max_repair_rounds=repair_rounds,
+            max_unit_splits=unit_splits,
             max_total_tokens=max_total_tokens,
             max_unit_characters=max_unit_characters,
             backend=backend,
