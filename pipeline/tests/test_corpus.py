@@ -384,3 +384,31 @@ def test_a_node_named_by_its_parent_is_placed_by_order(node_type: str) -> None:
 def test_a_node_that_must_carry_a_number_is_still_refused(node_type: str) -> None:
     with pytest.raises(PipelineError, match="no stable label"):
         _local_provision_id(_unlabelled(node_type), "part-1")
+
+
+def _definition(text: str, order: int = 1) -> dict:
+    return {
+        "draft_id": "node-0561",
+        "node_type": "definition",
+        "display_label": None,
+        "heading": None,
+        "order": order,
+        "content_blocks": [{"kind": "text", "text": text}],
+    }
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('"trustee" means the person in whom the property is invested;', "trustee"),
+        ("“trustee” means the person in whom the property is invested;", "trustee"),
+        ('trustee" under a collective investment scheme means the person;', "trustee"),
+    ],
+)
+def test_a_definition_is_named_by_its_term_despite_a_damaged_quotation(
+    text: str, expected: str
+) -> None:
+    assert (
+        _local_provision_id(_definition(text), "section-63.subsection-5")
+        == f"section-63.subsection-5.definition-{expected}"
+    )

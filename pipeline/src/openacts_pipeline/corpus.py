@@ -371,7 +371,7 @@ def _definition_term(node: dict[str, Any]) -> str | None:
         text = block.get("text")
         if not isinstance(text, str):
             continue
-        match = re.match(r'\s*["“‘\']([^"”’\']+)["”’\']', text)
+        match = re.match(r'\s*["“‘\']?([^"”’\']{1,80})["”’\']', text)
         if match:
             return _slug(match.group(1)) or None
     return None
