@@ -145,5 +145,5 @@ validate-execute:
 	  --report validation-report.json
 
 console:
-	uv run --project pipeline --group console openacts-console \
-	  --cache-root "$(CACHE)" --port $(PORT)
+	uv run --env-file pipeline/.env --project pipeline --group console \
+	  openacts-console --cache-root "$(CACHE)" --port $(PORT)
